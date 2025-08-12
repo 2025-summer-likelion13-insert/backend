@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>Google OAuth2 로그인 테스트</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; line-height: 1.5; padding: 24px; }
+    h1 { margin: 0 0 16px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    button, a.button { padding: 8px 12px; border: 1px solid #ccc; background: #f7f7f7; cursor: pointer; border-radius: 6px; text-decoration: none; color: inherit; }
+    pre { background: #111; color: #eee; padding: 12px; border-radius: 8px; white-space: pre-wrap; word-break: break-all; }
+    hr { margin: 16px 0; }
+    .muted { color:#666; }
+  </style>
+</head>
+<body>
+<h1>구글 로그인 테스트</h1>
+
+<!-- 로그인 / 로그아웃 -->
+<div class="row">
+  <a class="button" href="/oauth2/authorization/google">구글 로그인</a>
+  <button onclick="logout()">로그아웃</button>
+</div>
+
+<hr>
+
+<!-- 쿠키 확인 -->
+<div class="row">
+  <button onclick="checkCookie()">JWT 쿠키 확인</button>
+  <button onclick="clearView()">화면 지우기</button>
+</div>
+<pre id="cookieResult" class="muted">쿠키 없음</pre>
+
+<hr>
+
+<!-- API 호출 -->
+<div class="row">
+  <button onclick="me()">내 프로필(/api/auth/me)</button>
+  <button onclick="callProtected()">보호된 API 호출(/api/auth/test)</button>
+  <button onclick="refresh()">액세스 토큰 재발급(/api/auth/refresh)</button>
+</div>
+<pre id="apiResult" class="muted">응답 없음</pre>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  function clearView() {
+    $('cookieResult').textContent = '쿠키 없음';
+    $('apiResult').textContent = '응답 없음';
+  }
+
+  // 쿠키 문자열 그대로 표시
+  function checkCookie() {
+    $('cookieResult').textContent = document.cookie || '쿠키 없음';
+  }
+
+  // 공통 fetch (쿠키 포함)
+  async function req(url, options = {}) {
+    const res = await fetch(url, { credentials: 'include', ...options });
+    const text = await res.text();
+    // JSON이면 pretty print
+    try {
+      return JSON.stringify(JSON.parse(text), null, 2);
+    } catch {
+      return text;
+    }
+  }
+
+  // 보호된 API (테스트)
+  async function callProtected() {
+    const out = await req('/api/auth/test');
+    $('apiResult').textContent = out;
+  }
+
+  // 내 프로필
+  async function me() {
+    const out = await req('/api/auth/me');
+    $('apiResult').textContent = out;
+  }
+
+  // 토큰 재발급 (refresh_token 쿠키 필요)
+  async function refresh() {
+    const out = await req('/api/auth/refresh', { method: 'POST' });
+    $('apiResult').textContent = out;
+    // 서버가 새 access_token을 쿠키로 내려주면 페이지에선 보이지 않을 수 있으니
+    // 다시 쿠키 확인
+    checkCookie();
+  }
+
+  // 로그아웃: 쿠키 삭제 API 호출
+  async function logout() {
+    const out = await req('/api/auth/logout', { method: 'POST' });
+    $('apiResult').textContent = out;
+    // 서버가 쿠키 만료시켰으니 클라이언트에서도 확인
+    checkCookie();
+  }
+</script>
+</body>
+</html>
