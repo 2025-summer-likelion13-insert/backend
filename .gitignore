@@ -36,5 +36,13 @@ out/
 ### VS Code ###
 .vscode/
 
-src/main/resources/application.properties
+### Application ###
+application-local.properties
+application-prod.properties
+
+### File Uploads ###
+uploads/
+uploads/*
+
+### Resources ###
 src/main/resources/application.properties
