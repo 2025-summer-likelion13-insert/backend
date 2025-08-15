@@ -1,5 +1,6 @@
 package com.example.insert.oauth;
 
+import lombok.Getter;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 
@@ -9,6 +10,7 @@ import java.util.Map;
 public class CustomOAuth2User implements OAuth2User {
 
     private final Map<String, Object> attributes;
+    @Getter
     private final String email;
 
     public CustomOAuth2User(Map<String, Object> attributes) {
@@ -31,7 +33,4 @@ public class CustomOAuth2User implements OAuth2User {
         return email;
     }
 
-    public String getEmail() {
-        return email;
-    }
 }
