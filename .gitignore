@@ -43,3 +43,6 @@ application-prod.properties
 ### File Uploads ###
 uploads/
 uploads/*
+
+### Resources ###
+src/main/resources/application.properties
