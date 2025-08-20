@@ -14,6 +14,8 @@ import org.springframework.security.web.SecurityFilterChain;
 @Configuration
 @EnableWebSecurity
 @RequiredArgsConstructor
+
+/*
 public class SecurityConfig {
 
     private final CustomOAuth2UserService oAuth2UserService;
@@ -41,6 +43,27 @@ public class SecurityConfig {
                             res.setStatus(HttpServletResponse.SC_OK);
                         })
                 );
+
+        return http.build();
+    }
+}
+*/
+
+public class SecurityConfig {
+
+    @Bean
+    SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        http
+                .csrf(csrf -> csrf.disable())
+                // ✅ 임시로 모든 요청 허용
+                .authorizeHttpRequests(auth -> auth
+                        .anyRequest().permitAll()
+                )
+                // ✅ 로그인 종류 전부 끄기 (리다이렉트 방지)
+                .formLogin(form -> form.disable())
+                .httpBasic(basic -> basic.disable())
+                .oauth2Login(oauth2 -> oauth2.disable())    // ← 이거 중요!
+                .logout(l -> l.disable());
 
         return http.build();
     }

@@ -60,6 +60,9 @@ dependencies {
     
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
+
+    implementation 'org.mariadb.jdbc:mariadb-java-client:3.4.1'
+
 }
 
 tasks.named('test') {

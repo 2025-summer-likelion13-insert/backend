@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8" />
+    <title>공연 요약 목록</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        :root { --bg:#0b0c10; --card:#14161a; --text:#e8edf2; --muted:#9aa5b1; --accent:#4cc9f0; }
+        *{box-sizing:border-box}
+        body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Apple SD Gothic Neo,Noto Sans KR,sans-serif}
+        header{position:sticky;top:0;background:linear-gradient(180deg,#0b0c10,#0b0c10ee 70%,#0b0c1000);backdrop-filter:saturate(1.2) blur(4px);padding:16px 20px;border-bottom:1px solid #1f232a}
+        h1{margin:0;font-size:20px;letter-spacing:.2px}
+        .hint{font-size:12px;color:var(--muted);margin-top:6px}
+        .wrap{max-width:1200px;margin:20px auto;padding:0 16px}
+        .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px}
+        .card{background:var(--card);border:1px solid #232831;border-radius:14px;overflow:hidden;transition:transform .12s ease, box-shadow .12s ease}
+        .card:hover{transform:translateY(-2px);box-shadow:0 6px 24px rgba(0,0,0,.35)}
+        .poster{aspect-ratio:3/4;width:100%;object-fit:cover;background:#0f1115}
+        .body{padding:12px}
+        .title{font-size:14px;font-weight:700;line-height:1.35;margin:0 0 6px;word-break:keep-all}
+        .id{font-size:12px;color:var(--muted)}
+        .footer{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+        a.btn{display:inline-block;padding:6px 10px;border-radius:10px;border:1px solid #2b313b;color:var(--text);text-decoration:none;font-size:12px}
+        a.btn:hover{border-color:var(--accent);color:var(--accent)}
+        .toolbar{display:flex;gap:8px;align-items:center;margin:10px 0 18px}
+        .endpoint{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;color:var(--muted);word-break:break-all}
+        .empty{padding:30px;border:1px dashed #2b313b;border-radius:14px;color:var(--muted);text-align:center}
+        .count{font-size:12px;color:var(--muted)}
+        .srch{flex:1}
+        input[type="search"]{width:100%;padding:10px 12px;border-radius:12px;border:1px solid #2b313b;background:#0f1115;color:var(--text)}
+    </style>
+</head>
+<body>
+<header>
+    <h1>공연 요약 목록</h1>
+    <div class="hint">엔드포인트 변경: <code>?endpoint=/api/performs/fixed/top10</code> 또는 <code>/api/performs/fixed/upcoming</code></div>
+</header>
+
+<div class="wrap">
+    <div class="toolbar">
+        <div class="count" id="count">로딩 중…</div>
+        <div class="srch"><input id="q" type="search" placeholder="공연명 검색 (클라이언트 필터)" /></div>
+    </div>
+    <div class="endpoint" id="epHint"></div>
+    <div id="grid" class="grid"></div>
+    <div id="empty" class="empty" style="display:none">표시할 항목이 없습니다.</div>
+</div>
+
+<script>
+    const params = new URLSearchParams(location.search);
+    const ENDPOINT = params.get('endpoint') || '/api/performs/summary';
+
+    // 여러 데이터 스키마 대응용 헬퍼
+    const pick = (obj, keys, fallback='') => {
+        for (const k of keys) {
+            if (obj && obj[k] != null && obj[k] !== '') return obj[k];
+        }
+        return fallback;
+    };
+
+    let data = [];
+
+    async function load() {
+        document.getElementById('epHint').textContent = `Endpoint: ${ENDPOINT}`;
+        const res = await fetch(ENDPOINT, {cache:'no-store'});
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const json = await res.json();
+
+        // 응답이 {items:[...]} 형태 or 배열 형태 모두 지원
+        data = Array.isArray(json) ? json : (json.items || json.content || []);
+        render();
+    }
+
+    function render(filtered = null) {
+        const list = filtered ?? data;
+        const grid = document.getElementById('grid');
+        grid.innerHTML = '';
+        document.getElementById('count').textContent = `${list.length}건`;
+
+        if (!list.length) {
+            document.getElementById('empty').style.display = '';
+            return;
+        }
+        document.getElementById('empty').style.display = 'none';
+
+        for (const it of list) {
+            const extId = String(pick(it, ['mt20id','externalId','external_id','id','performId']));
+            const name = pick(it, ['prfnm','performName','title','name'],'(제목 없음)');
+            const poster = pick(it, ['poster','posterUrl','image','posterImageUrl'], '');
+
+            const card = document.createElement('article');
+            card.className = 'card';
+            card.innerHTML = `
+        <img class="poster" loading="lazy" alt="" src="${poster || 'data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22400%22 height=%22540%22><rect width=%22100%25%22 height=%22100%25%22 fill=%22%2311161c%22/><text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 fill=%22%234a5568%22 font-family=%22sans-serif%22 font-size=%2220%22>NO IMAGE</text></svg>'}">
+        <div class="body">
+          <h2 class="title" title="${name}">${name}</h2>
+          <div class="id">mt20id: ${extId}</div>
+          <div class="footer">
+            <a class="btn" href="/perform-detail.html?id=${encodeURIComponent(extId)}">상세보기</a>
+            <a class="btn" target="_blank" rel="noopener" href="https://www.kopis.or.kr/por/pblprfr/pblprfrView.do?mt20id=${encodeURIComponent(extId)}">KOPIS</a>
+          </div>
+        </div>`;
+            grid.appendChild(card);
+        }
+    }
+
+    // 간단한 클라이언트 검색
+    const q = document.getElementById('q');
+    q.addEventListener('input', () => {
+        const kw = q.value.trim().toLowerCase();
+        if (!kw) return render();
+        const filtered = data.filter(it => String(pick(it, ['prfnm','performName','title','name'],'')).toLowerCase().includes(kw));
+        render(filtered);
+    });
+
+    load().catch(err => {
+        document.getElementById('count').textContent = '불러오기 실패';
+        document.getElementById('epHint').textContent += ` (오류: ${err.message})`;
+    });
+</script>
+</body>
+</html>
