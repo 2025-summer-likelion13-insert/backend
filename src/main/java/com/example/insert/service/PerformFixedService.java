@@ -1,14 +1,16 @@
 package com.example.insert.service;
 
 import com.example.insert.config.PerformIngestProperties;
+import com.example.insert.dto.PerformCardDto;
+import com.example.insert.repository.PerformRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.ResponseEntity;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 import org.w3c.dom.*;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.net.URI;
@@ -17,16 +19,14 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import lombok.extern.slf4j.Slf4j;
-
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class PerformFixedService {
 
+    // 주의: KopisClient 사용 안 함 (현재 구현에선 직접 XML 호출)
     private final PerformIngestProperties props;
+    private final PerformRepository repo;
 
     @PersistenceContext
     private EntityManager em;
@@ -34,7 +34,6 @@ public class PerformFixedService {
     @Value("${kopis.api.key}")
     private String kopisApiKey;
 
-    private final RestTemplate http = new RestTemplate();
     private static final DateTimeFormatter YYMMDD = DateTimeFormatter.BASIC_ISO_DATE; // yyyyMMdd
 
     /* ------------------------------ 공개 메서드 ------------------------------ */
@@ -42,82 +41,58 @@ public class PerformFixedService {
     /** 고정값(기간 × 지역 × 상태) 전량 적재 */
     @Transactional
     public int importAllFixed() {
-        int total = 0;
-        String st = props.getStartDate().format(YYMMDD);
-        String ed = props.getEndDate().format(YYMMDD);
+        Objects.requireNonNull(props, "PerformIngestProperties 주입 실패");
+        Objects.requireNonNull(kopisApiKey, "kopis.api.key 누락");
 
-        for (Integer region : props.getRegions()) {
-            for (String state : props.getStates()) {
-                total += pullAndUpsertList(st, ed, region, state, props.getRows());
+        LocalDate ps = Optional.ofNullable(props.getStartDate()).orElse(LocalDate.now().minusDays(30));
+        LocalDate pe = Optional.ofNullable(props.getEndDate()).orElse(LocalDate.now());
+        String st = ps.format(YYMMDD);
+        String ed = pe.format(YYMMDD);
+
+        List<Integer> regions = Optional.ofNullable(props.getRegions()).orElse(List.of());
+        List<String> states = Optional.ofNullable(props.getStates()).orElse(List.of("01","02"));
+        int rows = Optional.ofNullable(props.getRows()).orElse(100);
+
+        int total = 0;
+        for (Integer region : regions) {
+            for (String state : states) {
+                total += pullAndUpsertList(st, ed, region, state, rows);
             }
         }
         return total;
     }
 
-    /** 고정값 TOP10: (curr-30) ~ curr 로 31일 창 + 기준일(date)=curr */
+    // PerformFixedService.java (기존 메서드 교체)
     public List<Map<String,Object>> top10Fixed() {
-        // ✅ 변경 포인트: 과거 30일 ~ 오늘
-        var curr = props.getCurrDate();
-        var stD  = curr.minusDays(30);  // 시작 = 오늘-30
-        var edD  = curr;                // 종료 = 오늘(현재 날짜)
+        LocalDate curr = Optional.ofNullable(props.getCurrDate()).orElse(LocalDate.now());
+        String d = curr.format(YYMMDD); // yyyyMMdd
+        String st = d, ed = d;
 
-        String st   = stD.format(YYMMDD);   // yyyyMMdd
-        String ed   = edD.format(YYMMDD);   // yyyyMMdd
-        String date = curr.format(YYMMDD);  // boxoffice 필수 파라미터 (st~ed 범위 내)
-
-        // 시군구(예: 2826,2818,2817) → 시도(28)로 변환
-        java.util.Set<Integer> areas = props.getRegions().stream()
-                .map(r -> (r >= 100) ? (r / 100) : r)
-                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
-
-        // (동일 기간) 시군구 조건으로 목록API에서 허용 공연ID 수집
-        java.util.Set<String> allowed = collectAllowedIds(st, ed, props.getRegions(), props.getRows());
-
-        // 시도별 박스오피스 호출 병합
-        java.util.Map<String, java.util.Map<String,Object>> merged = new java.util.LinkedHashMap<>();
-        for (Integer area : areas) {
-            for (java.util.Map<String,Object> m : callBoxOffice(st, ed, area, date, null, null)) {
-                Object key = m.get("mt20id");
-                if (key != null) merged.putIfAbsent(key.toString(), m);
-            }
+        // regions 첫 값 → 광역코드(예: 2826 -> 28)
+        Integer area = null;
+        List<Integer> regions = Optional.ofNullable(props.getRegions()).orElse(List.of());
+        if (!regions.isEmpty() && regions.get(0) != null) {
+            int raw = regions.get(0);
+            area = (raw >= 100) ? (raw / 100) : raw;
         }
 
-        // 시군구 허용ID와 교집합 → rnum 정렬 → 상위 10
-        java.util.List<java.util.Map<String,Object>> filtered = merged.values().stream()
-                .filter(m -> {
-                    Object id = m.get("mt20id");
-                    return id != null && (allowed.isEmpty() || allowed.contains(id.toString()));
-                })
-                .sorted(java.util.Comparator.comparingInt(m -> {
-                    try { return Integer.parseInt(String.valueOf(m.getOrDefault("rnum", "999"))); }
-                    catch (Exception ignore) { return 999; }
-                }))
+        List<Map<String,Object>> list = callBoxOffice(st, ed, area, d, null, null);
+
+        // rnum 오름차순 상위 10개
+        return list.stream()
+                .sorted(Comparator.comparingInt(m -> parseIntSafe(String.valueOf(m.getOrDefault("rnum","999")), 999)))
                 .limit(10)
-                .collect(java.util.stream.Collectors.toList());
-
-        // 교집합이 비면 시도 기준 TOP10이라도 노출(옵션)
-        if (filtered.isEmpty()) {
-            filtered = new java.util.ArrayList<>(merged.values()).stream()
-                    .sorted(java.util.Comparator.comparingInt(m -> {
-                        try { return Integer.parseInt(String.valueOf(m.getOrDefault("rnum", "999"))); }
-                        catch (Exception ignore) { return 999; }
-                    }))
-                    .limit(10)
-                    .collect(java.util.stream.Collectors.toList());
-        }
-        return filtered;
+                .toList();
     }
-
-
-
 
     /** 고정 currDate 기준 31일 윈도우로 DB 조회 */
     @SuppressWarnings("unchecked")
     public List<Map<String,Object>> upcomingFixed() {
-        LocalDate from = props.getCurrDate();
+        Objects.requireNonNull(props, "PerformIngestProperties 주입 실패");
+
+        LocalDate from = Optional.ofNullable(props.getCurrDate()).orElse(LocalDate.now());
         LocalDate to   = from.plusDays(31);
 
-        // JPQL로 기존 Perform 엔티티 조회 (리포지토리 수정 없이)
         var query = em.createQuery("""
             select p.id, p.externalId, p.title, p.startDate, p.endDate, p.venueName, p.posterUrl
             from Perform p
@@ -168,10 +143,7 @@ public class PerformFixedService {
                 String venue    = text(e, "fcltynm");
                 String poster   = text(e, "poster");
 
-                // 상세 줄거리 호출
                 String synopsis = fetchSynopsis(mt20id);
-
-                // upsert by externalId
                 upsertPerform(mt20id, prfnm, pdFrom, pdTo, venue, poster, synopsis);
                 saved++;
             }
@@ -180,14 +152,14 @@ public class PerformFixedService {
         return saved;
     }
 
-    /** KOPIS 박스오피스 호출
-     * @param st     yyyyMMdd (최대 31일 윈도우의 시작)
-     * @param ed     yyyyMMdd (최대 31일 윈도우의 끝)
-     * @param area   시도코드 (예: 11 서울, 28 인천)
-     * @param date   기준일 (필수, st~ed 범위 내)
-     * @param cate   장르코드(옵션, null 가능)
-     * @param seats  좌석수(옵션, null 가능) 예: "100","300","500","1000","5000","10000"
+    /**
+     * KOPIS 박스오피스 호출 (박스오피스는 '하루' 기준이므로 st=ed=date 권장)
+     * @param st   yyyyMMdd
+     * @param ed   yyyyMMdd
+     * @param area 시도코드 (예: 11 서울, 28 인천) — null 가능
+     * @param date 기준일 (필수, st~ed 범위 내)
      */
+    // PerformFixedService.java (기존 메서드 교체)
     private List<Map<String,Object>> callBoxOffice(String st, String ed, Integer area,
                                                    String date, String cate, String seats) {
         String base = "http://www.kopis.or.kr/openApi/restful/boxoffice";
@@ -195,33 +167,35 @@ public class PerformFixedService {
                 .append("service=").append(kopisApiKey)
                 .append("&stdate=").append(st)
                 .append("&eddate=").append(ed)
-                .append("&date=").append(date)
-                .append("&area=").append(String.valueOf(area));
+                .append("&date=").append(date);
+        if (area != null) qs.append("&area=").append(area);   // ✅ null이면 파라미터 제거
         if (cate != null && !cate.isBlank())  qs.append("&catecode=").append(cate);
         if (seats != null && !seats.isBlank()) qs.append("&srchseatscale=").append(seats);
 
         URI url = URI.create(base + "?" + qs);
-        log.info("boxoffice url={}", url);
+        log.info("[boxoffice] url={}", url);
 
-        Document doc = fetchXml(url);
-
-        // 루트: <boxofs> / 아이템: <boxof>
-        NodeList items = doc.getElementsByTagName("boxof");
-        List<Map<String,Object>> out = new ArrayList<>();
-        for (int i=0; i<(items==null?0:items.getLength()); i++) {
-            Element e = (Element) items.item(i);
-            Map<String,Object> m = new LinkedHashMap<>();
-            m.put("rnum",   text(e, "rnum"));
-            m.put("mt20id", text(e, "mt20id"));
-            m.put("prfnm",  text(e, "prfnm"));
-            m.put("poster", text(e, "poster"));
-            // 필요하면 기간/장소도 씁니다: prfpd, prfplcnm
-            out.add(m);
+        try {
+            Document doc = fetchXml(url);
+            NodeList items = doc.getElementsByTagName("boxof"); // 응답 아이템
+            List<Map<String,Object>> out = new ArrayList<>();
+            for (int i=0; i<(items==null?0:items.getLength()); i++) {
+                Element e = (Element) items.item(i);
+                Map<String,Object> m = new LinkedHashMap<>();
+                m.put("rnum",   text(e, "rnum"));
+                m.put("mt20id", text(e, "mt20id"));
+                m.put("prfnm",  text(e, "prfnm"));
+                m.put("poster", text(e, "poster"));
+                out.add(m);
+            }
+            log.info("[boxoffice] parsed items={}", out.size());
+            return out;
+        } catch (Exception ex) {
+            log.error("[boxoffice] call failed: {}", ex.getMessage(), ex);
+            // ❗ 실패해도 예외 던지지 않고 빈 배열
+            return Collections.emptyList();
         }
-        log.info("boxoffice parsed items={}", out.size());
-        return out;
     }
-
 
 
     /** 상세 줄거리 호출 */
@@ -231,9 +205,8 @@ public class PerformFixedService {
                 mt20id, kopisApiKey
         ));
         Document doc = fetchXml(url);
-        // 상세 응답의 루트가 <db> 하나일 수 있음
         NodeList items = doc.getElementsByTagName("db");
-        if (items.getLength() == 0) return null;
+        if (items == null || items.getLength() == 0) return null;
         Element e = (Element) items.item(0);
         return text(e, "sty");
     }
@@ -242,7 +215,6 @@ public class PerformFixedService {
     @Transactional
     protected void upsertPerform(String externalId, String title, String from, String to,
                                  String venue, String poster, String synopsis) {
-        // 존재 여부
         var list = em.createQuery("""
             select p from Perform p where p.externalId = :eid
         """, getPerformClass()).setParameter("eid", externalId).getResultList();
@@ -253,10 +225,9 @@ public class PerformFixedService {
             set(p, "externalId", externalId);
             em.persist(p);
         } else {
-            p = list.get(0); // managed
+            p = list.get(0);
         }
 
-        // 필드 매핑 (엔티티 필드명: externalId, title, startDate, endDate, venueName, posterUrl, synopsis 가정)
         set(p, "title", title);
         set(p, "venueName", venue);
         set(p, "posterUrl", poster);
@@ -270,7 +241,6 @@ public class PerformFixedService {
                 set(p, "endDate", LocalDate.parse(to.replaceAll("[^0-9]", ""), YYMMDD));
             }
         } catch (Exception ignore) {}
-        // managed 상태라 flush 시 업데이트됨
     }
 
     /* ------------------------------ XML/리플렉션 유틸 ------------------------------ */
@@ -281,26 +251,21 @@ public class PerformFixedService {
         f.setReadTimeout(5000);
         var rt = new org.springframework.web.client.RestTemplate(f);
 
-        // ✅ 문자열이 아니라 "바이트"로 받는다 (인코딩 보존)
-        org.springframework.http.ResponseEntity<byte[]> res = rt.getForEntity(uri, byte[].class);
+        var res = rt.getForEntity(uri, byte[].class);
         if (!res.getStatusCode().is2xxSuccessful() || res.getBody() == null) {
             throw new RuntimeException("KOPIS HTTP " + res.getStatusCodeValue() + " @ " + uri);
         }
 
         try {
-            var fac = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+            DocumentBuilderFactory fac = DocumentBuilderFactory.newInstance();
             fac.setNamespaceAware(false);
             fac.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
             var b = fac.newDocumentBuilder();
-
-            // ✅ 응답 바이트를 "그대로" 파서에 전달 → XML 선언/헤더의 charset을 따라 해석
             return b.parse(new java.io.ByteArrayInputStream(res.getBody()));
         } catch (Exception e) {
             throw new RuntimeException("XML parse error: " + e.getMessage(), e);
         }
     }
-
-
 
     private static String text(Element e, String tag) {
         NodeList nl = e.getElementsByTagName(tag);
@@ -310,7 +275,6 @@ public class PerformFixedService {
     }
 
     // --- Perform 엔티티 접근(리플렉션; 기존 파일 수정 없이 사용) ---
-
     private Class<?> performClassCache;
     private Class<?> getPerformClass() {
         if (performClassCache == null) {
@@ -329,28 +293,31 @@ public class PerformFixedService {
             f.setAccessible(true);
             f.set(target, value);
         } catch (NoSuchFieldException nsf) {
-            // 필드명이 다르면 여기에서 한 번만 경고 던지고 무시할 수도 있음
+            // 필드가 없으면 무시(로그만 남기고 계속 진행)
+            log.debug("필드 없음: {}", field);
         } catch (Exception e) {
             throw new RuntimeException("필드 세팅 실패: " + field, e);
         }
     }
 
-    // 시군구 목록 -> “허용 ID 집합”
-    private java.util.Set<String> collectAllowedIds(String st, String ed, java.util.List<Integer> signgucodes, int rows) {
-        java.util.Set<String> allowed = new java.util.LinkedHashSet<>();
+    /** 시군구 목록 -> “허용 ID 집합” (동일 기간에 목록 API 통해 수집) */
+    private Set<String> collectAllowedIds(String st, String ed, List<Integer> signgucodes, int rows) {
+        Set<String> allowed = new LinkedHashSet<>();
+        if (signgucodes == null || signgucodes.isEmpty()) return allowed;
+
         for (Integer sgc : signgucodes) {
             int page = 1;
             while (true) {
-                java.net.URI url = java.net.URI.create(String.format(
+                URI url = URI.create(String.format(
                         "http://www.kopis.or.kr/openApi/restful/pblprfr?service=%s&stdate=%s&eddate=%s&cpage=%d&rows=%d&signgucode=%s",
                         kopisApiKey, st, ed, page, rows, String.valueOf(sgc)
                 ));
-                org.w3c.dom.Document doc = fetchXml(url);
-                org.w3c.dom.NodeList items = doc.getElementsByTagName("db");
+                Document doc = fetchXml(url);
+                NodeList items = doc.getElementsByTagName("db");
                 if (items == null || items.getLength() == 0) break;
 
                 for (int i = 0; i < items.getLength(); i++) {
-                    org.w3c.dom.Element e = (org.w3c.dom.Element) items.item(i);
+                    Element e = (Element) items.item(i);
                     String id = text(e, "mt20id");
                     if (id != null && !id.isBlank()) allowed.add(id);
                 }
@@ -360,6 +327,16 @@ public class PerformFixedService {
         return allowed;
     }
 
+    /** 제목 부분검색(무페이징) */
+    public List<PerformCardDto> searchByTitleNoPaging(String q, Integer limit) {
+        if (q == null || q.isBlank()) return List.of();
+        var list = repo.findByTitleContainingIgnoreCase(q.trim(), Sort.by(Sort.Direction.DESC, "startDate"));
+        int cap = (limit == null || limit <= 0) ? 200 : Math.min(limit, 1000);
+        return list.stream().limit(cap).map(PerformCardDto::of).toList();
+    }
+
+    /* ------------------------------ helpers ------------------------------ */
+    private static int parseIntSafe(String s, int def) {
+        try { return Integer.parseInt(s); } catch (Exception e) { return def; }
+    }
 }
-
-

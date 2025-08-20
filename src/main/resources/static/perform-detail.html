@@ -59,7 +59,7 @@
 <script>
     const params = new URLSearchParams(location.search);
     const id = params.get('id');
-    const ENDPOINT_TMPL = params.get('endpoint') || '/api/performs/{id}';
+    const ENDPOINT_TMPL = params.get('endpoint') || '/api/performs/by-external/{id}';
 
     const pick = (obj, keys, fallback='') => {
         for (const k of keys) {

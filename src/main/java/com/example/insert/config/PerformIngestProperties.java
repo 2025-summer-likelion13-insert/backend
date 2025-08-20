@@ -2,6 +2,7 @@ package com.example.insert.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
 import java.util.List;
