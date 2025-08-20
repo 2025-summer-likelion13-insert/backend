@@ -39,6 +39,21 @@ public class PerformFixedController {
         }
     }
 
+    /** TOP10 딱 10개를 DB에 즉시 삽입(꼼수). excludeEnded=true면 공연종료(03)·종료일 지난 건 제외 */
+    // import 붙임: org.springframework.web.bind.annotation.RequestMethod
+    @RequestMapping(value = "/top10/import-exact", method = { RequestMethod.GET, RequestMethod.POST })
+    public Map<String, Object> importTop10Exact(
+            @RequestParam(name = "excludeEnded", defaultValue = "false") boolean excludeEnded
+    ) {
+        try {
+            int n = fixedService.importTop10ExactToDb(excludeEnded);
+            return Map.of("imported", n, "excludeEnded", excludeEnded);
+        } catch (Exception e) {
+            log.error("[/fixed/top10/import-exact] {}", e.getMessage(), e);
+            return Map.of("imported", 0, "excludeEnded", excludeEnded, "error", e.getMessage());
+        }
+    }
+
     /** 다가오는 공연 (예외 시 200 + []) */
     @GetMapping("/upcoming")
     public List<PerformCardDto> upcoming(@RequestParam(required = false, defaultValue = "31") int days) {
@@ -67,6 +82,4 @@ public class PerformFixedController {
     public PerformDetailDto detail(@PathVariable String externalId) {
         return queryService.getDetailByExternalId(externalId.trim());
     }
-
-
 }

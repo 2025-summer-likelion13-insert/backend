@@ -87,7 +87,7 @@ public class PerformFixedService {
         // 2) 백필: DB → pblprfr 로 40개까지
         int target = 40;
         if (candidates.size() < target) {
-            // 2-1) DB 우선 (state 01/02, 기간 curr~endDate) — 지역 필터는 엔티티 구조에 맞게 조정 가능
+            // 2-1) DB 우선 (state 01/02, 기간 curr~endDate)
             LocalDate end = Optional.ofNullable(props.getEndDate()).orElse(curr);
             try {
                 @SuppressWarnings("unchecked")
@@ -101,7 +101,7 @@ public class PerformFixedService {
                     """)
                         .setParameter("st", curr)
                         .setParameter("ed", end)
-                        .setMaxResults(target * 2) // 충분히 가져와서 중복 제거 후 사용
+                        .setMaxResults(target * 2)
                         .getResultList();
 
                 for (Object[] r : rows) {
@@ -117,12 +117,12 @@ public class PerformFixedService {
                     }
                 }
             } catch (Exception ignore) {
-                // 엔티티 스키마/인덱스 상황에 따라 실패해도 무시하고 pblprfr로 백필
+                // 엔티티 스키마/인덱스 상황에 따라 실패해도 무시
             }
         }
 
         if (candidates.size() < target) {
-            // 2-2) pblprfr(목록 API) 백필 — signgucodesub(4자리), prfstate(01/02), 기간: curr~endDate
+            // 2-2) pblprfr 백필 — signgucodesub(4자리), prfstate(01/02), 기간: curr~endDate
             LocalDate end = Optional.ofNullable(props.getEndDate()).orElse(curr);
             String ingestSt = curr.format(YYMMDD);
             String ingestEd = end.format(YYMMDD);
@@ -130,7 +130,7 @@ public class PerformFixedService {
             List<Integer> regions = Optional.ofNullable(props.getRegions()).orElse(List.of());
             List<String> states = Optional.ofNullable(props.getStates()).orElse(List.of("01", "02"));
 
-            int pageLimitPerCombo = 3; // 과호출 방지
+            int pageLimitPerCombo = 3;
             outer:
             for (Integer region : regions) {
                 for (String state : states) {
@@ -144,7 +144,6 @@ public class PerformFixedService {
                                 if (candidates.size() >= target) break outer;
                             }
                         }
-                        // 계속 더 필요하면 다음 페이지
                     }
                 }
             }
@@ -187,17 +186,17 @@ public class PerformFixedService {
             List<String> states = Optional.ofNullable(props.getStates()).orElse(List.of("01", "02"));
 
             int addedBatches = 0;
-            while (selected.size() < 10 && addedBatches < 3) { // 최대 3배치 확장
+            while (selected.size() < 10 && addedBatches < 3) {
                 boolean anyAdded = false;
                 for (Integer region : regions) {
                     for (String state : states) {
-                        int page = addedBatches + 4; // 앞서 1~3페이지 사용했으니 4페이지부터
+                        int page = addedBatches + 4; // 1~3페이지는 위에서 사용
                         List<Map<String, Object>> pageItems = callList(ingestSt, ingestEd, region, state, page, rows);
                         if (pageItems.isEmpty()) continue;
                         for (var m : pageItems) {
                             String id = String.valueOf(m.getOrDefault("mt20id", "")).trim();
                             if (id.isEmpty()) continue;
-                            if (processed.contains(id)) continue; // 이미 검사한 후보 스킵
+                            if (processed.contains(id)) continue;
                             // 상세 검사
                             boolean ended = false;
                             try {
@@ -227,6 +226,84 @@ public class PerformFixedService {
         }
 
         return selected;
+    }
+
+    /**
+     * TOP10 딱 10개만 DB에 즉시 삽입(꼼수). excludeEnded=true면 종료(03)·종료일 지난 건 제외
+     */
+    @Transactional
+    public int importTop10ExactToDb(boolean excludeEnded) {
+        LocalDate curr = Optional.ofNullable(props.getCurrDate()).orElse(LocalDate.now());
+        String st = curr.minusDays(30).format(YYMMDD);
+        String ed = curr.format(YYMMDD);
+        Integer area = 28; // TOP10은 area=28 고정
+
+        // 박스오피스 호출 → rnum 정렬 상위 10개만
+        List<Map<String, Object>> raw = callBoxOffice(st, ed, area);
+        List<Map<String, Object>> top10 = raw.stream()
+                .sorted(Comparator.comparingInt(m -> parseIntSafe(String.valueOf(m.getOrDefault("rnum","999")), 999)))
+                .limit(10)
+                .toList();
+
+        int imported = 0;
+        for (var m : top10) {
+            String mt20id = str(m.get("mt20id")).trim();
+            if (mt20id.isEmpty()) continue;
+
+            // 이미 있으면 스킵
+            if (repo.findByExternalId(mt20id).isPresent()) continue;
+
+            String title  = str(m.get("prfnm"));
+            String poster = str(m.get("poster"));
+
+            // 상세로 날짜/상태/장소/구군 등 보강 (실패해도 최소 삽입)
+            LocalDate startDate = null, endDate = null;
+            String venue = null, genre = null, areaStr = null, stateNorm = null, sigungu = null;
+            try {
+                var det = fetchDetailBasic(mt20id);
+                if (!det.isEmpty()) {
+                    startDate = parseDateFlexible(det.get("prfpdfrom"));
+                    endDate   = parseDateFlexible(det.get("prfpdto"));
+                    venue     = det.get("fcltynm");
+                    genre     = det.get("genrenm");
+                    areaStr   = det.get("area");
+                    sigungu   = det.get("signgucodesub");
+                    // 상태 정규화
+                    String stateRaw = String.valueOf(det.getOrDefault("prfstate","")).trim();
+                    stateNorm = switch (stateRaw) {
+                        case "01", "공연예정" -> "01";
+                        case "02", "공연중"   -> "02";
+                        case "03", "공연완료" -> "03";
+                        default -> stateRaw;
+                    };
+                    if (excludeEnded && ("03".equals(stateNorm) || (endDate != null && endDate.isBefore(curr)))) {
+                        continue;
+                    }
+                }
+            } catch (Exception ignore) {
+                // ignore
+            }
+
+            // 리플렉션으로 신규 엔티티 생성/세팅 → 영속화
+            Object p = instantiatePerform();
+            set(p, "externalId", mt20id);
+            set(p, "title", title.isBlank() ? "[제목미상]" : title);
+            set(p, "posterUrl", poster);
+            set(p, "startDate", startDate);
+            set(p, "endDate", endDate);
+            set(p, "venueName", venue);
+            set(p, "genre", genre);
+            set(p, "area", areaStr);
+            set(p, "state", stateNorm);
+            set(p, "sigunguCode", sigungu == null ? "" : sigungu);
+            set(p, "isAd", false);
+            em.persist(p);
+            imported++;
+        }
+
+        log.info("[TOP10→DB exact] imported={} of {} (st={} ed={} area={})",
+                imported, Math.min(10, raw.size()), st, ed, area);
+        return imported;
     }
 
     /* ------------------------------ 내부 구현 ------------------------------ */
@@ -265,7 +342,7 @@ public class PerformFixedService {
                 set(p, "posterUrl",  str(m.get("poster")));
                 set(p, "genre",      str(m.get("genrenm")));
                 set(p, "area",       str(m.get("area")));
-                set(p, "state",      str(m.get("prfstate"))); // 01/02만 요청하지만 방어적으로 저장
+                set(p, "state",      str(m.get("prfstate"))); // 응답 그대로 저장(필요시 정규화 가능)
                 try {
                     String from = str(m.get("prfpdfrom"));
                     String to   = str(m.get("prfpdto"));
@@ -368,6 +445,22 @@ public class PerformFixedService {
             m.put("prfpdto",   text(e, "prfpdto"));
         }
         return m;
+    }
+
+    /** 상세(간이) — 날짜/상태/장소/장르/지역/구군 코드까지 */
+    private Map<String, String> fetchDetailBasic(String mt20id) {
+        String base = "http://www.kopis.or.kr/openApi/restful/pblprfr/";
+        URI url = URI.create(base + mt20id + "?service=" + kopisApiKey);
+        Document doc = fetchXml(url);
+        NodeList items = doc.getElementsByTagName("db");
+        Map<String, String> out = new HashMap<>();
+        if (items != null && items.getLength() > 0) {
+            Element e = (Element) items.item(0);
+            for (String tag : List.of("prfpdfrom","prfpdto","fcltynm","genrenm","area","prfstate","signgucodesub")) {
+                out.put(tag, text(e, tag));
+            }
+        }
+        return out;
     }
 
     /** 상세 줄거리(기존 유지) */
