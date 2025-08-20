@@ -46,6 +46,9 @@ public class Perform {
     @Column(name = "area", length = 64)
     private String area;                               // area (옵션)
 
+    @Column(name = "sigungu_code", length = 4)        // ✅ 추가: signgucodesub(구·군 4자리)
+    private String sigunguCode;
+
     @Column(name = "state", length = 32)
     private String state;                              // prfstate (원문 코드/문자)
 
@@ -57,6 +60,8 @@ public class Perform {
 
     @Column(name = "updated_at")
     private OffsetDateTime updatedAt;
+
+
 
     @PrePersist
     void prePersist() {
