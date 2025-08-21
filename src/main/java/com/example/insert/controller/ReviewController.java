@@ -12,9 +12,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import jakarta.validation.Valid;
 import java.util.List;
+import java.util.ArrayList;
 
 @RestController
 @RequestMapping("/api/reviews")
@@ -25,14 +28,55 @@ import java.util.List;
 public class ReviewController {
 
     private final ReviewService reviewService;
+    private final ObjectMapper objectMapper;
 
     /**
-     * 리뷰 작성
+     * 리뷰 작성 (파일 업로드 포함)
      */
     @PostMapping
     @Operation(
-            summary = "리뷰 작성",
-            description = "사용자가 방문한 장소에 대한 리뷰를 작성합니다."
+            summary = "리뷰 작성 (파일 업로드 포함)",
+            description = "사용자가 방문한 장소에 대한 리뷰를 작성하고, 첨부 파일들을 업로드합니다."
+    )
+    @Transactional
+    public ResponseEntity<ApiResponse<ReviewResponse>> createReviewWithFiles(
+            @RequestParam("reviewData") String reviewDataJson,
+            @RequestParam(value = "files", required = false) MultipartFile[] files) {
+        
+        try {
+            // JSON 문자열을 CreateReviewRequest로 변환
+            CreateReviewRequest request = objectMapper.readValue(reviewDataJson, CreateReviewRequest.class);
+            
+            log.info("리뷰 작성 요청: 사용자={}, 장소={}, 일정={}, 파일수={}", 
+                    request.getUserId(), request.getPlaceId(), request.getScheduleId(), 
+                    files != null ? files.length : 0);
+            
+            // 파일 업로드 처리
+            List<String> mediaUrls = new ArrayList<>();
+            if (files != null && files.length > 0) {
+                mediaUrls = uploadFiles(files);
+            }
+            
+            // mediaUrls를 request에 설정
+            request.setMediaUrls(mediaUrls);
+            
+            ReviewResponse review = reviewService.createReview(request);
+            return ResponseEntity.ok(ApiResponse.success(review, "리뷰가 성공적으로 작성되었습니다."));
+            
+        } catch (Exception e) {
+            log.error("리뷰 작성 중 오류 발생", e);
+            return ResponseEntity.internalServerError()
+                    .body(ApiResponse.error("리뷰 작성 중 오류가 발생했습니다: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 리뷰 작성 (기존 방식 - 파일 없이)
+     */
+    @PostMapping("/simple")
+    @Operation(
+            summary = "리뷰 작성 (간단)",
+            description = "파일 없이 텍스트만으로 리뷰를 작성합니다."
     )
     @Transactional
     public ResponseEntity<ApiResponse<ReviewResponse>> createReview(
@@ -219,5 +263,79 @@ public class ReviewController {
             return ResponseEntity.internalServerError()
                     .body(ApiResponse.error("리뷰 삭제 중 오류가 발생했습니다."));
         }
+    }
+
+    /**
+     * 파일 업로드 처리
+     */
+    private List<String> uploadFiles(MultipartFile[] files) {
+        List<String> mediaUrls = new ArrayList<>();
+        
+        try {
+            for (MultipartFile file : files) {
+                if (!file.isEmpty()) {
+                    // 파일 검증
+                    validateFile(file);
+                    
+                    // 파일 저장 (UUID 기반 파일명)
+                    String fileName = saveFile(file);
+                    String fileUrl = "/api/files/download/" + fileName;
+                    mediaUrls.add(fileUrl);
+                    
+                    log.info("파일 업로드 완료: {}", fileName);
+                }
+            }
+        } catch (Exception e) {
+            log.error("파일 업로드 중 오류 발생", e);
+            throw new RuntimeException("파일 업로드 실패: " + e.getMessage());
+        }
+        
+        return mediaUrls;
+    }
+
+    /**
+     * 파일 검증
+     */
+    private void validateFile(MultipartFile file) {
+        if (file.isEmpty()) {
+            throw new IllegalArgumentException("빈 파일은 업로드할 수 없습니다.");
+        }
+        
+        long maxFileSize = 10 * 1024 * 1024; // 10MB
+        if (file.getSize() > maxFileSize) {
+            throw new IllegalArgumentException("파일 크기는 최대 10MB까지 가능합니다.");
+        }
+        
+        String contentType = file.getContentType();
+        String allowedTypes = "image/jpeg,image/png,image/gif,video/mp4,video/avi,video/mov";
+        if (contentType == null || !allowedTypes.contains(contentType)) {
+            throw new IllegalArgumentException("지원하지 않는 파일 형식입니다. (지원: JPEG, PNG, GIF, MP4, AVI, MOV)");
+        }
+    }
+
+    /**
+     * 파일 저장
+     */
+    private String saveFile(MultipartFile file) throws Exception {
+        // 업로드 디렉토리 생성
+        java.nio.file.Path uploadDir = java.nio.file.Paths.get("uploads");
+        if (!java.nio.file.Files.exists(uploadDir)) {
+            java.nio.file.Files.createDirectories(uploadDir);
+        }
+        
+        // 고유한 파일명 생성 (UUID + 원본 확장자)
+        String originalFilename = file.getOriginalFilename();
+        String extension = "";
+        if (originalFilename != null && originalFilename.contains(".")) {
+            extension = originalFilename.substring(originalFilename.lastIndexOf("."));
+        }
+        
+        String fileName = java.util.UUID.randomUUID().toString() + extension;
+        java.nio.file.Path filePath = uploadDir.resolve(fileName);
+        
+        // 파일 저장
+        java.nio.file.Files.copy(file.getInputStream(), filePath);
+        
+        return fileName;
     }
 }

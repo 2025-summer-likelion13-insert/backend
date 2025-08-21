@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8" />
+    <title>API 테스트</title>
+    <style>
+        body { font-family: system-ui, sans-serif; padding: 20px; max-width: 900px; margin: 0 auto; }
+        select, input, textarea, button { margin: 6px 0; width: 100%; box-sizing: border-box; }
+        textarea { min-height: 160px; }
+        pre { background: #f7f7f8; border: 1px solid #ddd; padding: 12px; white-space: pre-wrap; }
+        .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .hint { color: #666; font-size: 13px; margin-top: -4px; }
+    </style>
+</head>
+<body>
+<h1>API 테스트</h1>
+
+<label>엔드포인트 선택</label>
+<select id="endpoint">
+    <option value="">-- 선택 --</option>
+
+    <!-- 장소 추천 -->
+    <option value="POST:/api/place-recommendations/recommendations">[POST] 장소 추천 생성</option>
+    <option value="GET:/api/place-recommendations/places/{placeId}">[GET] 장소 상세 조회</option>
+
+    <!-- 리뷰 -->
+    <option value="POST:/api/reviews/simple">[POST] 리뷰 작성(간단)</option>
+    <option value="GET:/api/reviews/{reviewId}">[GET] 리뷰 단건 조회</option>
+    <option value="PUT:/api/reviews/{reviewId}">[PUT] 리뷰 수정</option>
+    <option value="GET:/api/reviews/users/{userId}/schedules/{scheduleId}">[GET] 사용자 일정별 리뷰 조회</option>
+    <option value="GET:/api/reviews/places/{placeId}">[GET] 장소별 리뷰 조회</option>
+    <option value="GET:/api/reviews/users/{userId}/schedules/{eventId}/reviewable">[GET] 리뷰 작성 가능 장소 조회</option>
+    <option value="DELETE:/api/reviews/{reviewId}">[DELETE] 리뷰 삭제 (?userId=)</option>
+
+    <!-- 파일 -->
+    <option value="POST:/api/files/upload">[POST] 파일 업로드(단일)</option>
+    <option value="POST:/api/files/upload-multiple">[POST] 파일 업로드(다중)</option>
+    <option value="GET:/api/files/download/{fileName}">[GET] 파일 다운로드</option>
+</select>
+
+<div id="formArea"></div>
+
+<button id="sendBtn">요청 보내기</button>
+
+<h3>응답</h3>
+<pre id="response"></pre>
+
+<script>
+    const API_BASE = ""; // 같은 서버에서 열면 공백 유지. 다른 포트면 "http://localhost:8080"
+
+    const endpointForms = {
+        // 장소 추천
+        "POST:/api/place-recommendations/recommendations": `
+        <div class="hint">Body(JSON)</div>
+        <textarea id="body">{
+  "venueName": "인천문학경기장",
+  "profileType": "COUPLE",
+  "transportationMethod": "WALK",
+  "customConditions": "저녁에 방문할 예정이고, 데이트하기 좋은 분위기의 장소를 원해요."
+}</textarea>
+      `,
+        "GET:/api/place-recommendations/places/{placeId}": `
+        <input id="placeId" placeholder="placeId (예: 67)" />
+      `,
+
+        // 리뷰
+        "POST:/api/reviews/simple": `
+        <div class="hint">Body(JSON)</div>
+        <textarea id="body">{
+  "userId": 1,
+  "placeId": 1,
+  "scheduleId": 1,
+  "rating": 5,
+  "content": "정말 맛있었어요! 경기장 근처에서 식사하기 좋은 곳이에요.",
+  "mediaUrls": ["https://example.com/review1.jpg","https://example.com/review2.jpg"],
+  "isVisited": true
+}</textarea>
+      `,
+        "GET:/api/reviews/{reviewId}": `
+        <input id="reviewId" placeholder="reviewId (예: 1)" />
+      `,
+        "PUT:/api/reviews/{reviewId}": `
+        <input id="reviewId" placeholder="reviewId (예: 1)" />
+        <div class="hint">Body(JSON)</div>
+        <textarea id="body">{
+  "userId": 1,
+  "placeId": 1,
+  "scheduleId": 1,
+  "rating": 4,
+  "content": "수정된 리뷰 내용입니다. 맛있었어요!",
+  "mediaUrls": ["https://example.com/new_image.jpg"],
+  "isVisited": true
+}</textarea>
+      `,
+        "GET:/api/reviews/users/{userId}/schedules/{scheduleId}": `
+        <div class="row">
+          <input id="userId" placeholder="userId (예: 1)" />
+          <input id="scheduleId" placeholder="scheduleId (예: 1)" />
+        </div>
+      `,
+        "GET:/api/reviews/places/{placeId}": `
+        <input id="placeId" placeholder="placeId (예: 1)" />
+      `,
+        "GET:/api/reviews/users/{userId}/schedules/{eventId}/reviewable": `
+        <div class="row">
+          <input id="userId" placeholder="userId (예: 1)" />
+          <input id="eventId" placeholder="eventId (예: 1)" />
+        </div>
+      `,
+        "DELETE:/api/reviews/{reviewId}": `
+        <div class="row">
+          <input id="reviewId" placeholder="reviewId (예: 1)" />
+          <input id="userId" placeholder="userId (query param, 예: 1)" />
+        </div>
+      `,
+
+        // 파일
+        "POST:/api/files/upload": `
+        <input id="file" type="file" />
+        <div class="hint">최대 10MB, 허용: JPEG/PNG/GIF/MP4/AVI/MOV</div>
+      `,
+        "POST:/api/files/upload-multiple": `
+        <input id="files" type="file" multiple />
+        <div class="hint">최대 20개, 각 10MB</div>
+      `,
+        "GET:/api/files/download/{fileName}": `
+        <input id="fileName" placeholder="fileName (예: f8a7b3c2-...jpg)" />
+        <div class="hint">응답은 바이너리. 새 탭으로 열리거나 다운로드 됩니다.</div>
+      `
+    };
+
+    const formArea = document.getElementById("formArea");
+    const responseBox = document.getElementById("response");
+    const endpointSelect = document.getElementById("endpoint");
+
+    endpointSelect.addEventListener("change", () => {
+        formArea.innerHTML = endpointForms[endpointSelect.value] || "";
+        responseBox.textContent = "";
+    });
+
+    document.getElementById("sendBtn").addEventListener("click", async () => {
+        const selected = endpointSelect.value;
+        if (!selected) return alert("엔드포인트를 선택하세요.");
+
+        const [method, rawPath] = selected.split(":");
+        let url = (API_BASE || "") + rawPath;
+        let options = { method, headers: {} };
+
+        // 경로 변수 치환
+        const repl = (token, id) => { url = url.replace(token, document.getElementById(id)?.value || ""); };
+        if (url.includes("{placeId}")) repl("{placeId}", "placeId");
+        if (url.includes("{reviewId}")) repl("{reviewId}", "reviewId");
+        if (url.includes("{userId}")) repl("{userId}", "userId");
+        if (url.includes("{scheduleId}")) repl("{scheduleId}", "scheduleId");
+        if (url.includes("{eventId}")) repl("{eventId}", "eventId");
+        if (url.includes("{fileName}")) repl("{fileName}", "fileName");
+
+        try {
+            if (method === "GET") {
+                if (url.startsWith("/api/files/download/") || url.includes("/api/files/download/")) {
+                    window.open(url, "_blank");
+                    responseBox.textContent = "파일 다운로드 요청을 새 탭에서 열었습니다.";
+                    return;
+                }
+            }
+
+            if (method === "POST" || method === "PUT") {
+                if (url.includes("/api/files/upload")) {
+                    const fd = new FormData();
+                    if (url.includes("upload-multiple")) {
+                        const files = document.getElementById("files").files;
+                        if (!files.length) return alert("업로드할 파일을 선택하세요.");
+                        for (const f of files) fd.append("files", f);
+                    } else {
+                        const f = document.getElementById("file").files[0];
+                        if (!f) return alert("업로드할 파일을 선택하세요.");
+                        fd.append("file", f);
+                    }
+                    options.body = fd;
+                } else {
+                    options.headers["Content-Type"] = "application/json";
+                    options.body = document.getElementById("body").value;
+                }
+            }
+
+            if (method === "DELETE") {
+                const qUserId = document.getElementById("userId")?.value;
+                if (qUserId) {
+                    url += (url.includes("?") ? "&" : "?") + "userId=" + encodeURIComponent(qUserId);
+                }
+            }
+
+            const res = await fetch(url, options);
+
+            const ctype = res.headers.get("content-type") || "";
+            if (ctype.includes("application/json")) {
+                const json = await res.json();
+                responseBox.textContent = JSON.stringify(json, null, 2);
+            } else {
+                const text = await res.text();
+                responseBox.textContent = text;
+            }
+        } catch (e) {
+            responseBox.textContent = "요청 중 오류: " + e;
+        }
+    });
+</script>
+</body>
+</html>
