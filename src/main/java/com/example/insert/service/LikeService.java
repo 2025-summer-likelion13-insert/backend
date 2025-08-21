@@ -19,6 +19,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+
+import java.util.Map;
+
 import java.util.Map;
 
 @Slf4j
@@ -30,6 +33,9 @@ public class LikeService {
     private final PerformRepository performRepo;
     private final UserRepository userRepo;
     private final CurrentUser current;
+
+//    // 포인트 테스트용 삭제 예정
+//    private final PointsService pointsService;
 
     private Perform findPerformOr404(String externalId) {
         return performRepo.findByExternalId(externalId)
@@ -49,6 +55,11 @@ public class LikeService {
 
         var existing = likeRepo.findByUserIdAndPerformId(uid, p.getId());
         if (existing.isPresent()) {
+
+//            //테스트 삭제예정
+//            // ★ 이미 찜 상태라도 포인트 적립은 한 번 보정 (원장 멱등으로 중복 방지)
+//            pointsService.awardForFavorite(uid, p.getId());
+
             return new LikeResponse(externalId, true, countByPerform(p));
         }
         try {
@@ -57,6 +68,11 @@ public class LikeService {
         } catch (DataIntegrityViolationException e) {
             log.debug("likeOn race: {}", e.getMessage()); // 경합 시 최종상태 true면 OK
         }
+
+//        // 테스트 삭제 예정
+//        pointsService.awardForFavorite(uid, p.getId());
+
+
         return new LikeResponse(externalId, true, countByPerform(p));
     }
 
