@@ -1,10 +1,14 @@
 package com.example.insert.controller;
 
-import com.example.insert.dto.LikeDtos.*;
+import com.example.insert.dto.LikePageResponse;
+import com.example.insert.dto.LikeResponse;
+import com.example.insert.dto.ToggleRequest;
 import com.example.insert.service.LikeService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/likes/perform")
@@ -13,23 +17,35 @@ public class LikeController {
 
     private final LikeService likeService;
 
-    /** 토글 */
+    /** 멱등 ON: 추가 */
+    @PutMapping("/{externalId}")
+    public ResponseEntity<LikeResponse> likeOn(@PathVariable String externalId) {
+        return ResponseEntity.ok(likeService.on(externalId));
+    }
+
+    /** 멱등 OFF: 삭제 */
+    @DeleteMapping("/{externalId}")
+    public ResponseEntity<LikeResponse> likeOff(@PathVariable String externalId) {
+        return ResponseEntity.ok(likeService.off(externalId));
+    }
+
+    /** (호환) 토글 — 추후 제거 가능 */
     @PostMapping("/toggle")
-    public ResponseEntity<ToggleLikeResponse> toggle(@RequestBody ToggleLikeRequest req) {
-        return ResponseEntity.ok(likeService.toggleByExternalId(req.externalId()));
+    @Deprecated
+    public ResponseEntity<LikeResponse> toggle(@RequestBody ToggleRequest req) {
+        return ResponseEntity.ok(likeService.toggle(req.externalId()));
     }
 
-    /** 내 찜 목록 */
-    @GetMapping
-    public ResponseEntity<MyLikesResponse> myLikes(
-            @RequestParam(defaultValue = "0") int offset,
-            @RequestParam(defaultValue = "20") int limit) {
-        return ResponseEntity.ok(likeService.listMyLikes(offset, limit));
+    /** 내 찜 목록 (페이징) */
+    @GetMapping("/me")
+    public ResponseEntity<LikePageResponse> myLikes(@RequestParam(defaultValue = "0") int page,
+                                                    @RequestParam(defaultValue = "20") int size) {
+        return ResponseEntity.ok(likeService.myLikes(page, size));
     }
 
-    /** 다건 여부 */
-    @PostMapping("/has-many")
-    public ResponseEntity<HasManyResponse> hasMany(@RequestBody HasManyRequest req) {
-        return ResponseEntity.ok(likeService.hasManyByExternalIds(req.externalIds()));
+    /** 단건 상태 조회 */
+    @GetMapping("/{externalId}/status")
+    public ResponseEntity<Map<String, Object>> status(@PathVariable String externalId) {
+        return ResponseEntity.ok(likeService.status(externalId));
     }
 }

@@ -1,24 +1,25 @@
 package com.example.insert.service;
 
-import com.example.insert.dto.LikeDtos.*;
+import com.example.insert.dto.LikeItem;
+import com.example.insert.dto.LikePageResponse;
+import com.example.insert.dto.LikeResponse;
 import com.example.insert.entity.Like;
 import com.example.insert.entity.Perform;
+import com.example.insert.entity.User;
 import com.example.insert.repository.LikeRepository;
 import com.example.insert.repository.PerformRepository;
+import com.example.insert.repository.UserRepository;
 import com.example.insert.util.CurrentUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
-import java.util.*;
-import java.util.stream.Collectors;
-
 import org.springframework.web.server.ResponseStatusException;
-import static org.springframework.http.HttpStatus.NOT_FOUND;
+
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -27,77 +28,88 @@ public class LikeService {
 
     private final LikeRepository likeRepo;
     private final PerformRepository performRepo;
+    private final UserRepository userRepo;
     private final CurrentUser current;
 
-    /** externalId 기준 토글 */
-    @Transactional
-    public ToggleLikeResponse toggleByExternalId(String externalId) {
-        log.info("[LIKE] toggle req externalId={} userId={}", externalId, current.idOrThrow());
-        if (externalId == null || externalId.isBlank())
-            throw new IllegalArgumentException("externalId required");
-
-        Long userId = current.idOrThrow();
-
-
-        // A안: 404로 명확히
-        var p = performRepo.findByExternalId(externalId)
+    private Perform findPerformOr404(String externalId) {
+        return performRepo.findByExternalId(externalId)
                 .orElseThrow(() -> new ResponseStatusException(
-                        NOT_FOUND, "perform not found: " + externalId));
-
-
-        return likeRepo.findByUserIdAndPerformId(userId, p.getId())
-                .map(existing -> { // 있으면 삭제
-                    likeRepo.delete(existing);
-                    long cnt = likeRepo.countByPerformId(p.getId());
-                    return new ToggleLikeResponse(false, null, cnt);
-                })
-                .orElseGet(() -> { // 없으면 생성
-                    Like l = Like.builder().user(existingUserRef(userId))
-                            .perform(p)
-                            .build();
-                    Like saved = likeRepo.save(l);
-                    long cnt = likeRepo.countByPerformId(p.getId());
-                    return new ToggleLikeResponse(true, saved.getId(), cnt);
-                });
+                        HttpStatus.NOT_FOUND, "PERFORM_NOT_FOUND: " + externalId));
     }
 
-    /** 내 찜 목록 페이징 */
+    private long countByPerform(Perform p) {
+        return likeRepo.countByPerformId(p.getId());
+    }
+
+    /** 멱등 ON: 항상 liked=true 보장 */
+    @Transactional
+    public LikeResponse on(String externalId) {
+        Long uid = current.idOrThrow();
+        Perform p = findPerformOr404(externalId);
+
+        var existing = likeRepo.findByUserIdAndPerformId(uid, p.getId());
+        if (existing.isPresent()) {
+            return new LikeResponse(externalId, true, countByPerform(p));
+        }
+        try {
+            User userRef = userRepo.getReferenceById(uid);
+            likeRepo.save(Like.builder().user(userRef).perform(p).build());
+        } catch (DataIntegrityViolationException e) {
+            log.debug("likeOn race: {}", e.getMessage()); // 경합 시 최종상태 true면 OK
+        }
+        return new LikeResponse(externalId, true, countByPerform(p));
+    }
+
+    /** 멱등 OFF: 항상 liked=false 보장 */
+    @Transactional
+    public LikeResponse off(String externalId) {
+        Long uid = current.idOrThrow();
+        Perform p = findPerformOr404(externalId);
+
+        var existing = likeRepo.findByUserIdAndPerformId(uid, p.getId());
+        if (existing.isEmpty()) {
+            return new LikeResponse(externalId, false, countByPerform(p));
+        }
+        likeRepo.delete(existing.get());
+        return new LikeResponse(externalId, false, countByPerform(p));
+    }
+
+    /** (호환) 토글 — 필요시 제거 */
+    @Transactional
+    public LikeResponse toggle(String externalId) {
+        Long uid = current.idOrThrow();
+        Perform p = findPerformOr404(externalId);
+
+        var existing = likeRepo.findByUserIdAndPerformId(uid, p.getId());
+        if (existing.isPresent()) {
+            likeRepo.delete(existing.get());
+            return new LikeResponse(externalId, false, countByPerform(p));
+        }
+        try {
+            User userRef = userRepo.getReferenceById(uid);
+            likeRepo.save(Like.builder().user(userRef).perform(p).build());
+        } catch (DataIntegrityViolationException e) {
+            log.debug("toggle race: {}", e.getMessage());
+            // 경합 시 최종상태 true 보장
+        }
+        return new LikeResponse(externalId, true, countByPerform(p));
+    }
+
     @Transactional(readOnly = true)
-    public MyLikesResponse listMyLikes(int offset, int limit) {
-        Long userId = current.idOrThrow();
-        int off = Math.max(0, offset);
-        int lim = (limit <= 0 || limit > 100) ? 20 : limit;
-
-        var page = likeRepo.findByUserIdFetchPerform(userId, PageRequest.of(off / lim, lim));
-        var items = page.getContent().stream().map(l -> new LikedPerformItem(
-                l.getPerform().getExternalId(),
-                l.getPerform().getTitle(),
-                l.getPerform().getPosterUrl(),
-                // createdAt(LocalDateTime) → OffsetDateTime (UTC)
-                l.getCreatedAt() == null ? null : l.getCreatedAt().atOffset(ZoneOffset.UTC)
-        )).toList();
-
-        int next = off + items.size();
-        return new MyLikesResponse(items, next, page.getTotalElements());
+    public LikePageResponse myLikes(int page, int size) {
+        Long uid = current.idOrThrow();
+        var pg = likeRepo.findByUserIdOrderByCreatedAtDesc(uid, PageRequest.of(page, size));
+        var items = pg.getContent().stream()
+                .map(l -> new LikeItem(l.getPerform().getExternalId(), l.getCreatedAt()))
+                .toList();
+        return new LikePageResponse(items, pg.getNumber(), pg.getSize(), pg.getTotalElements(), pg.getTotalPages());
     }
 
-    /** 여러 externalId의 찜 여부 */
     @Transactional(readOnly = true)
-    public HasManyResponse hasManyByExternalIds(List<String> externalIds) {
-        Long userId = current.idOrThrow();
-        if (externalIds == null || externalIds.isEmpty())
-            return new HasManyResponse(Collections.emptyMap());
-
-        var liked = new HashSet<>(likeRepo.findLikedExternalIds(userId, externalIds));
-        Map<String, Boolean> map = externalIds.stream()
-                .collect(Collectors.toMap(e -> e, liked::contains, (a,b)->a, LinkedHashMap::new));
-        return new HasManyResponse(map);
-    }
-
-    /** user 참조 프록시 생성(불필요한 SELECT 방지) */
-    private com.example.insert.entity.User existingUserRef(Long id) {
-        var u = new com.example.insert.entity.User();
-        u.setId(id);
-        return u;
+    public Map<String, Object> status(String externalId) {
+        Long uid = current.idOrThrow();
+        var p = findPerformOr404(externalId);
+        boolean liked = likeRepo.findByUserIdAndPerformId(uid, p.getId()).isPresent();
+        return Map.of("externalId", externalId, "liked", liked);
     }
 }
