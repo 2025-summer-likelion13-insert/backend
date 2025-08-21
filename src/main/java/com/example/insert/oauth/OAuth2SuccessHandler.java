@@ -6,12 +6,12 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.web.authentication.SimpleUrlAuthenticationSuccessHandler;
+import org.springframework.security.oauth2.core.oidc.user.OidcUser;
 import org.springframework.stereotype.Component;
+import org.springframework.security.web.authentication.SimpleUrlAuthenticationSuccessHandler;
 
 import java.io.IOException;
 
-// OAuth2SuccessHandler.java
 @Component
 @RequiredArgsConstructor
 public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler {
@@ -22,20 +22,24 @@ public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler 
     public void onAuthenticationSuccess(HttpServletRequest request,
                                         HttpServletResponse response,
                                         Authentication authentication) throws IOException {
-        CustomOAuth2User user = (CustomOAuth2User) authentication.getPrincipal();
+        Object principal = authentication.getPrincipal();
 
-        String accessToken = jwtTokenProvider.generateAccessToken(user.getEmail());
-        String refreshToken = jwtTokenProvider.generateRefreshToken(user.getEmail());
+        String email;
+        if (principal instanceof CustomOAuth2User customUser) {
+            email = customUser.getEmail();
+        } else if (principal instanceof OidcUser oidcUser) {
+            email = oidcUser.getAttribute("email");
+        } else {
+            throw new IllegalStateException("Unknown principal type: " + principal.getClass());
+        }
 
-        // 실제 사용 쿠키(서버에서만 읽음)
+        String accessToken = jwtTokenProvider.generateAccessToken(email);
+        String refreshToken = jwtTokenProvider.generateRefreshToken(email);
+
         CookieUtil.addHttpOnlyCookie(response, "access_token", accessToken, 3600);
         CookieUtil.addHttpOnlyCookie(response, "refresh_token", refreshToken, 1209600);
-
-        // 개발 확인용 쿠키(브라우저 JS에서 읽힘) - 배포 전 제거 권장
         CookieUtil.addReadableCookie(response, "access_token_dev", accessToken, 3600);
 
-        // 로그인 후 다시 로그인 페이지로 돌아오게
-        getRedirectStrategy().sendRedirect(request, response, "/login.html");
+        getRedirectStrategy().sendRedirect(request, response, "/");
     }
 }
-
