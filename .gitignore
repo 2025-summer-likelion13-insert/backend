@@ -45,4 +45,8 @@ uploads/
 uploads/*
 
 ### Resources ###
+<<<<<<< HEAD
+# src/main/resources/application.properties
+=======
 src/main/resources/application.properties
+>>>>>>> origin/main

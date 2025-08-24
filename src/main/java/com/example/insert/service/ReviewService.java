@@ -30,12 +30,12 @@ public class ReviewService {
      */
     @Transactional
     public ReviewResponse createReview(CreateReviewRequest request) {
-        log.info("리뷰 생성 요청: 사용자={}, 장소={}, 일정={}", 
+        log.info("리뷰 생성 요청: 사용자={}, 장소={}, 일정={}",
                 request.getUserId(), request.getPlaceId(), request.getScheduleId());
 
         // 일정이 존재하는지 확인
         UserSchedule schedule = userScheduleRepository.findByUserIdAndEventIdAndPlaceId(
-                request.getUserId(), request.getScheduleId(), request.getPlaceId())
+                        request.getUserId(), request.getScheduleId(), request.getPlaceId())
                 .orElseThrow(() -> new IllegalArgumentException("해당 일정을 찾을 수 없습니다."));
 
         // 이미 리뷰가 작성되었는지 확인
@@ -105,7 +105,7 @@ public class ReviewService {
         log.info("사용자 일정 리뷰 조회: 사용자={}, 일정={}", userId, scheduleId);
 
         List<Review> reviews = reviewRepository.findByUserIdAndScheduleId(userId, scheduleId);
-        
+
         return reviews.stream()
                 .map(this::convertToReviewResponse)
                 .collect(Collectors.toList());
@@ -118,7 +118,7 @@ public class ReviewService {
         log.info("장소 리뷰 조회: 장소={}", placeId);
 
         List<Review> reviews = reviewRepository.findByPlaceId(placeId);
-        
+
         return reviews.stream()
                 .map(this::convertToReviewResponse)
                 .collect(Collectors.toList());
@@ -151,14 +151,14 @@ public class ReviewService {
 
         // 일정에 추가된 장소들 조회
         List<UserSchedule> schedules = userScheduleRepository.findByUserIdAndEventId(userId, scheduleId);
-        
+
         return schedules.stream()
                 .map(schedule -> {
                     // 이미 리뷰가 작성되었는지 확인
                     boolean hasReview = reviewRepository
                             .findByUserIdAndPlaceIdAndScheduleId(userId, schedule.getPlaceId(), scheduleId)
                             .isPresent();
-                    
+
                     // 리뷰가 없는 장소만 반환
                     if (!hasReview) {
                         RecommendedPlace place = recommendedPlaceRepository.findById(schedule.getPlaceId()).orElse(null);
@@ -184,7 +184,7 @@ public class ReviewService {
     private ReviewResponse convertToReviewResponse(Review review) {
         // 장소 정보 조회
         RecommendedPlace place = recommendedPlaceRepository.findById(review.getPlaceId()).orElse(null);
-        
+
         return ReviewResponse.builder()
                 .id(review.getId())
                 .userId(review.getUserId())
