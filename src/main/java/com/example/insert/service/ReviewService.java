@@ -13,8 +13,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.example.insert.service.PointsService;
-
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -26,8 +24,6 @@ public class ReviewService {
     private final ReviewRepository reviewRepository;
     private final RecommendedPlaceRepository recommendedPlaceRepository;
     private final UserScheduleRepository userScheduleRepository;
-
-    private final PointsService pointsService;
 
     /**
      * 리뷰 생성
@@ -61,12 +57,6 @@ public class ReviewService {
 
         Review savedReview = reviewRepository.save(review);
         log.info("리뷰 생성 완료: ID={}", savedReview.getId());
-
-        // 리뷰 저장 "성공" 직후 포인트 적립 (같은 @Transactional 경계)
-        // 중복 적립 방지는 PointsService 내부에서 처리(원장 유니크키/exists 체크)
-        // 리뷰 저장이 롤백되면 포인트도 함께 롤백됨
-        pointsService.awardForReview(request.getUserId(), savedReview.getId());
-
 
         return convertToReviewResponse(savedReview);
     }
