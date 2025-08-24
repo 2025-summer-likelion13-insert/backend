@@ -40,6 +40,6 @@ public class OAuth2SuccessHandler extends SimpleUrlAuthenticationSuccessHandler 
         CookieUtil.addHttpOnlyCookie(response, "refresh_token", refreshToken, 1209600);
         CookieUtil.addReadableCookie(response, "access_token_dev", accessToken, 3600);
 
-        getRedirectStrategy().sendRedirect(request, response, "/");
+        getRedirectStrategy().sendRedirect(request, response, "https://insertsajahoo.netlify.app");
     }
 }
