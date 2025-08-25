@@ -2,6 +2,7 @@ package com.example.insert.service;
 
 import com.example.insert.config.PerformIngestProperties;
 import com.example.insert.dto.PerformCardDto;
+import com.example.insert.entity.Perform;
 import com.example.insert.repository.PerformRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -233,78 +234,106 @@ public class PerformFixedService {
      */
     @Transactional
     public int importTop10ExactToDb(boolean excludeEnded) {
-        LocalDate curr = Optional.ofNullable(props.getCurrDate()).orElse(LocalDate.now());
-        String st = curr.minusDays(30).format(YYMMDD);
-        String ed = curr.format(YYMMDD);
-        Integer area = 28; // TOP10은 area=28 고정
+        // 1) 조회와 동일한 집합(종료 제외된 10개)을 그대로 사용
+        List<Map<String, Object>> top10 = top10Fixed();
 
-        // 박스오피스 호출 → rnum 정렬 상위 10개만
-        List<Map<String, Object>> raw = callBoxOffice(st, ed, area);
-        List<Map<String, Object>> top10 = raw.stream()
-                .sorted(Comparator.comparingInt(m -> parseIntSafe(String.valueOf(m.getOrDefault("rnum","999")), 999)))
-                .limit(10)
-                .toList();
+        int ok = 0;
+        List<String> failed = new ArrayList<>();
 
-        int imported = 0;
         for (var m : top10) {
-            String mt20id = str(m.get("mt20id")).trim();
-            if (mt20id.isEmpty()) continue;
-
-            // 이미 있으면 스킵
-            if (repo.findByExternalId(mt20id).isPresent()) continue;
-
-            String title  = str(m.get("prfnm"));
-            String poster = str(m.get("poster"));
-
-            // 상세로 날짜/상태/장소/구군 등 보강 (실패해도 최소 삽입)
-            LocalDate startDate = null, endDate = null;
-            String venue = null, genre = null, areaStr = null, stateNorm = null, sigungu = null;
+            String id = String.valueOf(m.getOrDefault("mt20id","")).trim();
             try {
-                var det = fetchDetailBasic(mt20id);
-                if (!det.isEmpty()) {
-                    startDate = parseDateFlexible(det.get("prfpdfrom"));
-                    endDate   = parseDateFlexible(det.get("prfpdto"));
-                    venue     = det.get("fcltynm");
-                    genre     = det.get("genrenm");
-                    areaStr   = det.get("area");
-                    sigungu   = det.get("signgucodesub");
-                    // 상태 정규화
-                    String stateRaw = String.valueOf(det.getOrDefault("prfstate","")).trim();
-                    stateNorm = switch (stateRaw) {
-                        case "01", "공연예정" -> "01";
-                        case "02", "공연중"   -> "02";
-                        case "03", "공연완료" -> "03";
-                        default -> stateRaw;
-                    };
-                    if (excludeEnded && ("03".equals(stateNorm) || (endDate != null && endDate.isBefore(curr)))) {
-                        continue;
-                    }
-                }
-            } catch (Exception ignore) {
-                // ignore
+                upsertTop10One(m);               // 항목별 상세 보강 + 즉시 flush
+                ok++;
+                log.info("[TOP10→DB] upsert ok {}", id);
+            } catch (Exception e) {
+                failed.add(id);
+                log.warn("[TOP10→DB] upsert FAIL {} cause={}", id, e.toString());
+                try { em.clear(); } catch (Exception ignore) {}  // 실패 항목 영속성 격리
             }
-
-            // 리플렉션으로 신규 엔티티 생성/세팅 → 영속화
-            Object p = instantiatePerform();
-            set(p, "externalId", mt20id);
-            set(p, "title", title.isBlank() ? "[제목미상]" : title);
-            set(p, "posterUrl", poster);
-            set(p, "startDate", startDate);
-            set(p, "endDate", endDate);
-            set(p, "venueName", venue);
-            set(p, "genre", genre);
-            set(p, "area", areaStr);
-            set(p, "state", stateNorm);
-            set(p, "sigunguCode", sigungu == null ? "" : sigungu);
-            set(p, "isAd", false);
-            em.persist(p);
-            imported++;
         }
-
-        log.info("[TOP10→DB exact] imported={} of {} (st={} ed={} area={})",
-                imported, Math.min(10, raw.size()), st, ed, area);
-        return imported;
+        log.info("[TOP10→DB exact] ok={} failed={}", ok, failed);
+        return ok;  // 삽입/업데이트 성공 건수
     }
+
+
+
+
+    private boolean isNotPastEndDateSafe(Map<String, Object> m) {
+        try {
+            String ymd = String.valueOf(m.getOrDefault("prfpdto",""));
+            // yyyymmdd 형태라면:
+            java.time.LocalDate end = java.time.LocalDate.parse(ymd, java.time.format.DateTimeFormatter.BASIC_ISO_DATE);
+            return !end.isBefore(java.time.LocalDate.now());
+        } catch (Exception ignore) {
+            // 날짜 파싱 실패 시 제외하지 않음(너무 보수적으로 털지 않기)
+            return true;
+        }
+    }
+
+
+    private void upsertTop10One(Map<String, Object> m) {
+        String externalId = String.valueOf(m.getOrDefault("mt20id","")).trim();
+        if (externalId.isEmpty()) throw new IllegalArgumentException("mt20id empty");
+
+        // 1) 상세 보강 (박스오피스 항목은 state/date 등 없음)
+        LocalDate startDate = null, endDate = null;
+        String state = null, venue = null, genre = null, area = null, sigungu = null;
+        try {
+            var det = fetchDetailBasic(externalId);
+            if (!det.isEmpty()) {
+                startDate = parseYmdOrNull(det.get("prfpdfrom"));
+                endDate   = parseYmdOrNull(det.get("prfpdto"));
+                state     = det.get("prfstate");
+                venue     = det.get("fcltynm");
+                genre     = det.get("genrenm");
+                area      = det.get("area");
+                sigungu   = det.get("signgucodesub");
+            }
+        } catch (Exception ignore) {}
+
+        // 2) 기본값/길이 방어 (엔티티 제약/DB 제약 보호)
+        String title  = safeLen(String.valueOf(m.getOrDefault("prfnm","")), 200);
+        String poster = safeLen(String.valueOf(m.getOrDefault("poster","")), 1024);
+        if (title == null || title.isBlank()) title = "[제목미상]";
+        if (state == null || state.isBlank()) state = "01"; // 최소 정상값(공연예정)
+
+        // 3) 업서트
+        Perform entity = repo.findByExternalId(externalId).orElseGet(Perform::new);
+        entity.setExternalId(externalId);
+        entity.setTitle(title);
+        entity.setPosterUrl(poster);
+        entity.setState(safeLen(state, 4));
+        if (startDate != null) entity.setStartDate(startDate);
+        if (endDate   != null) entity.setEndDate(endDate);
+        if (venue     != null) entity.setVenueName(venue);
+        if (genre     != null) entity.setGenre(genre);
+        if (area      != null) entity.setArea(area);
+        if (sigungu   != null) entity.setSigunguCode(sigungu);
+
+        // 4) 항목별 즉시 검증 (여기서 문제 터지면 해당 건만 실패로 분리)
+        repo.saveAndFlush(entity);
+    }
+
+
+
+
+
+    private String safeLen(String s, int max) {
+        if (s == null) return null;
+        return s.length() <= max ? s : s.substring(0, max);
+    }
+
+    private java.time.LocalDate parseYmdOrNull(String ymd) {
+        try {
+            if (ymd == null || ymd.isBlank()) return null;
+            return java.time.LocalDate.parse(ymd, java.time.format.DateTimeFormatter.BASIC_ISO_DATE);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+
 
     /* ------------------------------ 내부 구현 ------------------------------ */
 

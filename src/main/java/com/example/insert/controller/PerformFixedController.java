@@ -43,7 +43,7 @@ public class PerformFixedController {
     // import 붙임: org.springframework.web.bind.annotation.RequestMethod
     @RequestMapping(value = "/top10/import-exact", method = { RequestMethod.GET, RequestMethod.POST })
     public Map<String, Object> importTop10Exact(
-            @RequestParam(name = "excludeEnded", defaultValue = "false") boolean excludeEnded
+            @RequestParam(name = "excludeEnded", defaultValue = "true") boolean excludeEnded
     ) {
         try {
             int n = fixedService.importTop10ExactToDb(excludeEnded);
@@ -53,6 +53,7 @@ public class PerformFixedController {
             return Map.of("imported", 0, "excludeEnded", excludeEnded, "error", e.getMessage());
         }
     }
+
 
     /** 다가오는 공연 (예외 시 200 + []) */
     @GetMapping("/upcoming")

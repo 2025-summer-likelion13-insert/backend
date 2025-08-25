@@ -110,8 +110,9 @@ public class KopisImportService {
 
                     if (changed) {
                         // synopsis는 변경 시에만 갱신 고려(비용 절감). 필요 없으면 주석 처리 가능.
-                        // String synopsis = kopis.synopsis(externalId).orElse(p.getSynopsis());
-                        // p.setSynopsis(synopsis);
+                        String synopsis = kopis.synopsis(externalId).orElse(p.getSynopsis());
+                        if (synopsis != null && synopsis.length() > 4000) synopsis = synopsis.substring(0, 4000);
+                        p.setSynopsis(synopsis);
                         repo.save(p);
                         savedOrUpdated++;
                     }

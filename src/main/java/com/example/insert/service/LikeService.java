@@ -56,7 +56,7 @@ public class LikeService {
         var existing = likeRepo.findByUserIdAndPerformId(uid, p.getId());
         if (existing.isPresent()) {
 
-//            //테스트 삭제예정
+//            //포인트 테스트 삭제예정
 //            // ★ 이미 찜 상태라도 포인트 적립은 한 번 보정 (원장 멱등으로 중복 방지)
 //            pointsService.awardForFavorite(uid, p.getId());
 
@@ -69,7 +69,7 @@ public class LikeService {
             log.debug("likeOn race: {}", e.getMessage()); // 경합 시 최종상태 true면 OK
         }
 
-//        // 테스트 삭제 예정
+//        // 포인트 테스트 삭제 예정
 //        pointsService.awardForFavorite(uid, p.getId());
 
 
