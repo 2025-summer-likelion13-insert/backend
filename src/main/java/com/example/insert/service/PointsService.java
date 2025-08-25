@@ -1,5 +1,6 @@
 package com.example.insert.service;
 
+
 import com.example.insert.entity.LevelRule;
 import com.example.insert.entity.PointLedger;
 import com.example.insert.entity.User;
