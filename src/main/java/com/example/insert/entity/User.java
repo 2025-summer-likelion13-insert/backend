@@ -5,16 +5,9 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-<<<<<<< HEAD
-<<<<<<< HEAD
-import jakarta.persistence.*;
 
-=======
->>>>>>> origin/main
-=======
-import jakarta.persistence.*;
+import java.time.LocalDateTime;
 
->>>>>>> origin/main_distribute
 @Entity
 @Table(name = "users")
 @Data
@@ -44,41 +37,31 @@ public class User {
     private String phoneNumber;
 
     @Column(name = "created_at")
-    private java.time.LocalDateTime createdAt;
+    private LocalDateTime createdAt;
 
     @Column(name = "updated_at")
-    private java.time.LocalDateTime updatedAt;
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> origin/main_distribute
+    private LocalDateTime updatedAt;
 
     @Column(nullable = false)
     private int points = 0;
 
     @Column(nullable = false)
     private int level = 1;
-<<<<<<< HEAD
-=======
->>>>>>> origin/main
-    
-=======
 
->>>>>>> origin/main_distribute
     @PrePersist
     protected void onCreate() {
-        createdAt = java.time.LocalDateTime.now();
-        updatedAt = java.time.LocalDateTime.now();
+        createdAt = LocalDateTime.now();
+        updatedAt = LocalDateTime.now();
     }
 
     @PreUpdate
     protected void onUpdate() {
-        updatedAt = java.time.LocalDateTime.now();
+        updatedAt = LocalDateTime.now();
     }
 
     public enum ProfileType {
-        ALONE,      // 혼자
-        COUPLE,     // 커플
-        FAMILY      // 가족 단위
+        ALONE,   // 혼자
+        COUPLE,  // 커플
+        FAMILY   // 가족 단위
     }
 }

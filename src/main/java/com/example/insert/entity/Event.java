@@ -20,15 +20,14 @@ public class Event {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     
-<<<<<<< HEAD
-=======
+
     @Column(name = "user_id", nullable = false)
     private Long userId;
     
     @Column(name = "external_id")
     private String externalId;  // 공연 ID와 연결
     
->>>>>>> origin/main
+
     @Column(nullable = false)
     private String name;
     
