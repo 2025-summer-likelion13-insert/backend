@@ -22,6 +22,8 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
+import static org.apache.commons.lang3.StringUtils.defaultIfBlank;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -148,6 +150,7 @@ public class PerformFixedService {
                     }
                 }
             }
+
         }
 
         // 3) 종료 제외 필터 + 10개 보장
@@ -226,6 +229,9 @@ public class PerformFixedService {
             }
         }
 
+        log.info("[TOP10] selected ids={}",
+                selected.stream().map(m -> String.valueOf(m.get("mt20id"))).toList());
+
         return selected;
     }
 
@@ -234,27 +240,123 @@ public class PerformFixedService {
      */
     @Transactional
     public int importTop10ExactToDb(boolean excludeEnded) {
-        // 1) 조회와 동일한 집합(종료 제외된 10개)을 그대로 사용
+        // 1) 종료 제외된 TOP10 집합
         List<Map<String, Object>> top10 = top10Fixed();
+        if (excludeEnded) {
+            top10 = top10.stream().filter(this::isNotPastEndDateSafe).toList();
+        }
 
         int ok = 0;
         List<String> failed = new ArrayList<>();
+        List<String> ids = new ArrayList<>();
 
         for (var m : top10) {
             String id = String.valueOf(m.getOrDefault("mt20id","")).trim();
+            if (id.isEmpty()) continue;
+            ids.add(id);
+
             try {
-                upsertTop10One(m);               // 항목별 상세 보강 + 즉시 flush
+                upsertTop10One(m);   // ← 여기서 기본 정보 upsert (상세 시도 포함)
                 ok++;
                 log.info("[TOP10→DB] upsert ok {}", id);
             } catch (Exception e) {
                 failed.add(id);
                 log.warn("[TOP10→DB] upsert FAIL {} cause={}", id, e.toString());
-                try { em.clear(); } catch (Exception ignore) {}  // 실패 항목 영속성 격리
+                try { em.clear(); } catch (Exception ignore) {}
             }
         }
-        log.info("[TOP10→DB exact] ok={} failed={}", ok, failed);
-        return ok;  // 삽입/업데이트 성공 건수
+
+        // 2) 상세가 비어 있는 항목들만 재보강(네트워크/레이트리밋 때문일 수 있음)
+        try {
+            int enriched = enrichMissingDetails(ids);
+            log.info("[TOP10→DB] enrich missing details done: {}", enriched);
+        } catch (Exception e) {
+            log.warn("[TOP10→DB] enrich step skipped due to {}", e.toString());
+        }
+
+        log.info("[TOP10→DB exact] ok={} failed={} idsFailed={}", ok, failed.size(), failed);
+        return ok;
     }
+
+    @Transactional
+    public int enrichMissingDetails(List<String> externalIds) {
+        if (externalIds == null || externalIds.isEmpty()) return 0;
+
+        // DB에서 해당 10개를 한 번에 읽고, “상세가 빈” 것만 추림
+        List<Perform> list = repo.findByExternalIdIn(externalIds);
+        int changed = 0;
+
+        for (Perform p : list) {
+            boolean need =
+                    isBlank(p.getSynopsis()) ||
+                            p.getStartDate() == null ||
+                            p.getEndDate() == null ||
+                            isBlank(p.getVenueName()) ||
+                            isBlank(p.getState());
+
+            if (!need) continue;
+
+            String eid = p.getExternalId();
+            try {
+                // 상세/줄거리 재조회
+                Map<String, String> det = fetchDetailBasic(eid);
+                String synopsis = fetchSynopsis(eid);
+
+                boolean dirty = false;
+
+                if (det != null && !det.isEmpty()) {
+                    LocalDate from = parseYmdOrNull(det.get("prfpdfrom"));
+                    LocalDate to   = parseYmdOrNull(det.get("prfpdto"));
+                    String    st   = normalizeState(det.get("prfstate"));
+                    String    ven  = cutEmptyAsNull(det.get("fcltynm"), 255);
+                    String    gen  = cutEmptyAsNull(det.get("genrenm"), 64);
+                    String    ar   = cutEmptyAsNull(det.get("area"), 64);
+                    String    sig  = cutEmptyAsNull(det.get("signgucodesub"), 4);
+
+                    if (from != null && !from.equals(p.getStartDate())) { p.setStartDate(from); dirty = true; }
+                    if (to   != null && !to.equals(p.getEndDate()))     { p.setEndDate(to);   dirty = true; }
+                    if (!isBlank(st) && !st.equals(p.getState()))       { p.setState(cut(st, 32)); dirty = true; }
+                    if (!safeEquals(p.getVenueName(), ven))             { p.setVenueName(ven); dirty = true; }
+                    if (!safeEquals(p.getGenre(), gen))                 { p.setGenre(gen);     dirty = true; }
+                    if (!safeEquals(p.getArea(), ar))                   { p.setArea(ar);       dirty = true; }
+                    if (!safeEquals(p.getSigunguCode(), sig))           { p.setSigunguCode(sig); dirty = true; }
+                }
+
+                if (!isBlank(synopsis)) {
+                    if (synopsis.length() > 500_000) synopsis = synopsis.substring(0, 500_000);
+                    if (!safeEquals(p.getSynopsis(), synopsis)) { p.setSynopsis(synopsis); dirty = true; }
+                }
+
+                if (dirty) {
+                    repo.saveAndFlush(p);
+                    changed++;
+                    log.info("[ENRICH] updated {}", eid);
+                }
+            } catch (Exception ex) {
+                log.warn("[ENRICH] fail eid={} cause={}", eid, ex.toString());
+                try { em.clear(); } catch (Exception ignore) {}
+            }
+
+            // KOPIS 과다호출 방지(너무 빠르면 429/타임아웃) — 필요시 딜레이
+            // try { Thread.sleep(50); } catch (InterruptedException ignore) {}
+        }
+        return changed;
+    }
+
+    private static boolean isBlank(String s){ return s==null || s.isBlank(); }
+    private static boolean safeEquals(Object a, Object b){ return (a==b) || (a!=null && a.equals(b)); }
+    private static String cut(String s, int max){ return (s!=null && s.length()>max)? s.substring(0,max): s; }
+    private static String cutEmptyAsNull(String s, int max){
+        if (s==null) return null;
+        String t=s.trim();
+        if (t.isEmpty()) return null;
+        return t.length()>max? t.substring(0,max): t;
+    }
+
+
+
+
+
 
 
 
@@ -276,7 +378,7 @@ public class PerformFixedService {
         String externalId = String.valueOf(m.getOrDefault("mt20id","")).trim();
         if (externalId.isEmpty()) throw new IllegalArgumentException("mt20id empty");
 
-        // 1) 상세 보강 (박스오피스 항목은 state/date 등 없음)
+        // ---------- 상세 보강 ----------
         LocalDate startDate = null, endDate = null;
         String state = null, venue = null, genre = null, area = null, sigungu = null;
         try {
@@ -292,28 +394,96 @@ public class PerformFixedService {
             }
         } catch (Exception ignore) {}
 
-        // 2) 기본값/길이 방어 (엔티티 제약/DB 제약 보호)
-        String title  = safeLen(String.valueOf(m.getOrDefault("prfnm","")), 200);
-        String poster = safeLen(String.valueOf(m.getOrDefault("poster","")), 1024);
-        if (title == null || title.isBlank()) title = "[제목미상]";
-        if (state == null || state.isBlank()) state = "01"; // 최소 정상값(공연예정)
+        // ---------- 값 정규화 (엔티티 제약에 정확히 맞춤) ----------
+        // external_id VARCHAR(32)
+        externalId = cut(externalId, 32);
 
-        // 3) 업서트
+        // title VARCHAR(255) - 비면 기본값
+        String title = cutEmptyAsNull(String.valueOf(m.getOrDefault("prfnm","")).trim(), 255);
+        if (title == null) title = "[제목미상]";
+
+        // poster_url TEXT - UTF-8 바이트 기준 안전 컷(64KB 미만)
+        String poster = String.valueOf(m.getOrDefault("poster",""));
+        poster = cutByUtf8Bytes(poster, 60_000);
+
+        // state VARCHAR(32) - 코드화(빈값이면 '01'로 기본)
+        state = normalizeState(state);
+        if (state == null || state.isBlank()) state = "01";
+        state = cut(state, 32);
+
+        // venue VARCHAR(255), genre/area VARCHAR(64), sigungu_code VARCHAR(4)
+        venue   = cutEmptyAsNull(venue, 255);
+        genre   = cutEmptyAsNull(genre, 64);
+        area    = cutEmptyAsNull(area, 64);
+        sigungu = cutEmptyAsNull(sigungu, 4);
+
+        // ---------- UPSERT ----------
         Perform entity = repo.findByExternalId(externalId).orElseGet(Perform::new);
+        boolean isNew = (entity.getId() == null);
+
         entity.setExternalId(externalId);
         entity.setTitle(title);
         entity.setPosterUrl(poster);
-        entity.setState(safeLen(state, 4));
+        entity.setState(state);
         if (startDate != null) entity.setStartDate(startDate);
         if (endDate   != null) entity.setEndDate(endDate);
         if (venue     != null) entity.setVenueName(venue);
         if (genre     != null) entity.setGenre(genre);
         if (area      != null) entity.setArea(area);
         if (sigungu   != null) entity.setSigunguCode(sigungu);
+        // synopsis는 여기선 저장 안 함(오류 원인 제거)
 
-        // 4) 항목별 즉시 검증 (여기서 문제 터지면 해당 건만 실패로 분리)
-        repo.saveAndFlush(entity);
+        try {
+            repo.saveAndFlush(entity);               // ★ 항목별 즉시 DB 적용
+            log.info("[TOP10→DB] {} {} titleLen={} posterBytes={} state={} sigungu={}",
+                    (isNew ? "insert" : "update"),
+                    externalId,
+                    title.length(),
+                    (poster == null ? 0 : poster.getBytes(java.nio.charset.StandardCharsets.UTF_8).length),
+                    state, sigungu);
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            String cause = (e.getMostSpecificCause() != null ? e.getMostSpecificCause().getMessage() : e.getMessage());
+            log.error("[TOP10→DB] integrity error extId={} titleLen={} posterLen={} venueLen={} genreLen={} areaLen={} sigungu={} state={} cause={}",
+                    externalId,
+                    (title == null ? -1 : title.length()),
+                    (poster == null ? -1 : poster.length()),
+                    (venue == null ? -1 : venue.length()),
+                    (genre == null ? -1 : genre.length()),
+                    (area == null ? -1 : area.length()),
+                    sigungu, state, cause, e);
+            throw e; // 상위에서 failed 집계
+        } catch (Exception e) {
+            log.error("[TOP10→DB] unexpected error extId={} msg={}", externalId, e.toString(), e);
+            throw e;
+        }
     }
+
+    /* --- helpers (같은 클래스에 추가/유지) --- */
+
+    private static String normalizeState(String s) {
+        if (s == null || s.isBlank()) return "01";
+        String t = s.trim();
+        if (t.equals("01") || t.contains("예정")) return "01";
+        if (t.equals("02") || t.contains("중"))   return "02";
+        if (t.equals("03") || t.contains("완료") || t.contains("종료")) return "03";
+        return t;
+    }
+    private static String cutByUtf8Bytes(String s, int maxBytes) {
+        if (s == null) return null;
+        byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        if (b.length <= maxBytes) return s;
+        int bytes = 0, i = 0, len = s.length();
+        while (i < len && bytes < maxBytes) {
+            int cp = s.codePointAt(i);
+            int need = new String(Character.toChars(cp))
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+            if (bytes + need > maxBytes) break;
+            bytes += need;
+            i += Character.charCount(cp);
+        }
+        return s.substring(0, i);
+    }
+
 
 
 
@@ -509,17 +679,26 @@ public class PerformFixedService {
     @Transactional
     protected void upsertPerform(String externalId, String title, String from, String to,
                                  String venue, String poster, String synopsis) {
-        var list = em.createQuery("""
-            select p from Perform p where p.externalId = :eid
-        """, getPerformClass()).setParameter("eid", externalId).getResultList();
+        // --- 길이/널 방어 ---
+        externalId = cut(externalId, 32);
+        title      = defaultIfBlank(cut(title, 255), "[제목미상]");
+        venue      = cutEmptyAsNull(venue, 255);
+        poster     = (poster != null && poster.length() > 60000) ? poster.substring(0, 60000) : poster;
 
-        Object p;
+        // synopsis 방어: DB가 MEDIUMTEXT면 사실 컷이 거의 필요 없지만,
+        // 스키마가 아직 TEXT/VARCHAR일 수도 있으니 안전 컷(문자 기준) 적용
+        if (synopsis != null && synopsis.length() > 500_000) {
+            synopsis = synopsis.substring(0, 500_000);
+        }
+
+        var list = em.createQuery("""
+        select p from Perform p where p.externalId = :eid
+    """, getPerformClass()).setParameter("eid", externalId).getResultList();
+
+        Object p = list.isEmpty() ? instantiatePerform() : list.get(0);
         if (list.isEmpty()) {
-            p = instantiatePerform();
             set(p, "externalId", externalId);
             em.persist(p);
-        } else {
-            p = list.get(0);
         }
 
         set(p, "title", title);
@@ -532,10 +711,22 @@ public class PerformFixedService {
                 set(p, "startDate", LocalDate.parse(from.replaceAll("[^0-9]", ""), YYMMDD));
             }
             if (to != null && !to.isBlank()) {
-                set(p, "endDate", LocalDate.parse(to.replaceAll("[^0-9]", ""), YYMMDD));
+                set(p, "endDate",   LocalDate.parse(to.replaceAll("[^0-9]", ""), YYMMDD));
             }
         } catch (Exception ignore) {}
+
+        // ★ 항목별로 즉시 DB에 보내 예외를 현재 건으로 한정
+        try {
+            em.flush();
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            String cause = (e.getMostSpecificCause() != null ? e.getMostSpecificCause().getMessage() : e.getMessage());
+            log.error("[INGEST] integrity error extId={} titleLen={} synopsisLen={} cause={}",
+                    externalId, (title==null?-1:title.length()), (synopsis==null?-1:synopsis.length()), cause, e);
+            // 현재 건만 롤백하고 다음 건 진행하도록 예외를 상위로 전파하지 않게 설계하려면 여기서 swallow하고 return;
+            throw e; // ← 만약 계속 진행하고 싶으면 이 줄을 지우고 return; 로 바꾸세요.
+        }
     }
+
 
     /* ------------------------------ XML/리플렉션/유틸 ------------------------------ */
 

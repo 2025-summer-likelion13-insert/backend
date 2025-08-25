@@ -27,12 +27,15 @@ import java.util.*;
 @Slf4j
 public class PerformController {
 
+
+
     private final KopisImportService importService;
     private final PerformQueryService queryService;
     private final PerformRepository performRepository;
     private final PerformIngestProperties props;
 
     /* ============================= 조회 ============================= */
+
 
     @GetMapping("/{id}")
     public ResponseEntity<PerformDetailDto> getDetail(@PathVariable String id) {

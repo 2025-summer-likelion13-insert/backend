@@ -1,10 +1,11 @@
 package com.example.insert.dto;
 
 import com.example.insert.entity.Perform;
+import com.fasterxml.jackson.annotation.JsonInclude;
 
 import java.time.LocalDate;
-import java.util.Objects;
 
+@JsonInclude(JsonInclude.Include.NON_NULL) // ← 선택: null인 필드는 JSON에서 숨김
 public record PerformDetailDto(
         String externalId,
         String title,
@@ -20,17 +21,17 @@ public record PerformDetailDto(
 ) {
     public static PerformDetailDto of(Perform p) {
         return new PerformDetailDto(
-                Objects.toString(p.getExternalId(), ""),
-                Objects.toString(p.getTitle(), ""),
+                p.getExternalId(),
+                p.getTitle(),
                 p.getStartDate(),
                 p.getEndDate(),
-                Objects.toString(p.getVenueName(), ""),
-                Objects.toString(p.getSynopsis(), ""),
-                Objects.toString(p.getPosterUrl(), ""),
-                Objects.toString(p.getState(), ""),
-                Objects.toString(p.getGenre(), ""),
-                Objects.toString(p.getArea(), ""),
-                Objects.toString(p.getSigunguCode(), "")
+                p.getVenueName(),
+                p.getSynopsis(),
+                p.getPosterUrl(),
+                p.getState(),
+                p.getGenre(),
+                p.getArea(),
+                p.getSigunguCode()
         );
     }
 }

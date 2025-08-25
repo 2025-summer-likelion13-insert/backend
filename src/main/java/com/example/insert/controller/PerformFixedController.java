@@ -21,9 +21,16 @@ public class PerformFixedController {
     private final PerformQueryService queryService;   // upcoming/search/detail
 
     /** TOP10: A 플로우(후보40→종료제외→10보장) 결과만 노출 */
+    /** TOP10: A 플로우(후보40→종료제외→10보장) 결과 노출 + DB 자동 보강 */
     @GetMapping("/top10")
     public List<Map<String, String>> top10() {
         try {
+            // ① 먼저 DB 보강 (중복 안전: upsert + saveAndFlush)
+            //    excludeEnded=false 로 고정 — 이미 top10Fixed()에서 종료 제외하므로 이중 필터 방지
+            int imported = fixedService.importTop10ExactToDb(false);
+            log.info("[/fixed/top10] auto-import done: {}", imported);
+
+            // ② 그 다음 최신 TOP10 목록을 다시 계산해서 반환
             var list = fixedService.top10Fixed();
             return list.stream()
                     .map(m -> Map.of(
@@ -33,17 +40,19 @@ public class PerformFixedController {
                             "poster", String.valueOf(m.getOrDefault("poster",""))
                     ))
                     .toList();
+
         } catch (Exception e) {
             log.error("[/fixed/top10] {}", e.getMessage(), e);
             return List.of();  // 실패해도 200 + []
         }
     }
 
+
     /** TOP10 딱 10개를 DB에 즉시 삽입(꼼수). excludeEnded=true면 공연종료(03)·종료일 지난 건 제외 */
     // import 붙임: org.springframework.web.bind.annotation.RequestMethod
     @RequestMapping(value = "/top10/import-exact", method = { RequestMethod.GET, RequestMethod.POST })
     public Map<String, Object> importTop10Exact(
-            @RequestParam(name = "excludeEnded", defaultValue = "true") boolean excludeEnded
+            @RequestParam(name = "excludeEnded", defaultValue = "false") boolean excludeEnded
     ) {
         try {
             int n = fixedService.importTop10ExactToDb(excludeEnded);
