@@ -5,8 +5,11 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+<<<<<<< HEAD
 import jakarta.persistence.*;
 
+=======
+>>>>>>> origin/main
 @Entity
 @Table(name = "users")
 @Data
@@ -40,12 +43,15 @@ public class User {
     
     @Column(name = "updated_at")
     private java.time.LocalDateTime updatedAt;
+<<<<<<< HEAD
 
     @Column(nullable = false)
     private int points = 0;
 
     @Column(nullable = false)
     private int level = 1;
+=======
+>>>>>>> origin/main
     
     @PrePersist
     protected void onCreate() {
