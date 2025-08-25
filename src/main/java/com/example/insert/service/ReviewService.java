@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -24,6 +25,8 @@ public class ReviewService {
     private final ReviewRepository reviewRepository;
     private final RecommendedPlaceRepository recommendedPlaceRepository;
     private final UserScheduleRepository userScheduleRepository;
+
+
 
     /**
      * 리뷰 생성
@@ -57,6 +60,8 @@ public class ReviewService {
 
         Review savedReview = reviewRepository.save(review);
         log.info("리뷰 생성 완료: ID={}", savedReview.getId());
+
+
 
         return convertToReviewResponse(savedReview);
     }

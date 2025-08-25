@@ -30,6 +30,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-client'
+
     
     // Database
     implementation 'com.h2database:h2'
@@ -38,10 +39,12 @@ dependencies {
     // AI/ML (OpenAI API client)
     implementation 'com.theokanning.openai-gpt3-java:service:0.18.2'
     
+
     // JWT
     implementation 'io.jsonwebtoken:jjwt-api:0.11.5'
     implementation 'io.jsonwebtoken:jjwt-impl:0.11.5'
     implementation 'io.jsonwebtoken:jjwt-jackson:0.11.5'
+
     
     // Utilities
     implementation 'org.apache.commons:commons-lang3:3.12.0'
@@ -58,13 +61,19 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
     
+
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
 
     // DB 연결
     implementation 'org.mariadb.jdbc:mariadb-java-client:3.3.3'
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+
+
+    //flyway 자동 DB 수정
+    implementation 'org.flywaydb:flyway-core'
 }
+
 
 tasks.named('test') {
     useJUnitPlatform()

@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8" />
+    <title>공연 대시보드 (TOP10 / 다가오는 공연)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        :root { --gap: 14px; --radius: 12px; }
+        body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:0; background:#f7f8fa; color:#111; }
+        header { padding: 18px; background:#111827; color:#fff; }
+        header h1 { margin:0; font-size:18px; }
+        main { padding: 18px; max-width: 1100px; margin: 0 auto; }
+        section { background:#fff; border-radius: var(--radius); padding: 14px; margin-bottom: 18px; border:1px solid #e5e7eb; }
+        section h2 { margin: 0 0 10px; font-size: 16px; }
+        .grid { display:grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: var(--gap); }
+        @media (max-width: 1024px){ .grid { grid-template-columns: repeat(3, minmax(0,1fr)); } }
+        @media (max-width: 640px){ .grid { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+        .card { border:1px solid #e5e7eb; border-radius: var(--radius); overflow:hidden; background:#fff; display:flex; flex-direction:column; }
+        .thumb { position:relative; aspect-ratio: 3/4; background:#f3f4f6; display:flex; align-items:center; justify-content:center; font-size:12px; color:#6b7280; }
+        .thumb img { width:100%; height:100%; object-fit:cover; display:block; }
+        .rank { position:absolute; top:8px; left:8px; background:#111827; color:#fff; font-size:12px; padding:3px 8px; border-radius:999px; }
+        .meta { padding:10px; display:flex; flex-direction:column; gap:4px; }
+        .title { font-size:14px; font-weight:600; line-height:1.35; color:#111827; }
+        .sub { font-size:12px; color:#6b7280; }
+        .pill { display:inline-block; margin-top:2px; font-size:11px; color:#374151; background:#f3f4f6; padding:2px 6px; border-radius:999px; }
+        .bar { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+        .count { margin-left:auto; font-size:12px; color:#4b5563; }
+        .error { color:#b91c1c; background:#fef2f2; border:1px solid #fecaca; padding:10px; border-radius:10px; display:none; margin-top:8px; }
+    </style>
+</head>
+<body>
+<header>
+    <h1>공연 대시보드</h1>
+    <div class="searchbar" style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+        <input id="search-input" type="search" placeholder="공연명 일부로 검색 (예: 펜타, 포트…)"
+               style="flex:1; padding:10px 12px; border-radius:10px; border:1px solid #e5e7eb; outline:none;">
+        <button id="search-btn" style="padding:10px 14px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; cursor:pointer;">
+            검색
+        </button>
+        <button id="clear-btn" style="padding:10px 14px; border:1px solid #e5e7eb; border-radius:10px; background:#fff; cursor:pointer; display:none;">
+            초기화
+        </button>
+    </div>
+</header>
+
+<!-- 검색 결과 -->
+<section id="search-section" style="display:none;">
+    <div class="bar">
+        <h2 style="margin:0">검색 결과</h2>
+        <div class="count" id="search-count">0건</div>
+    </div>
+    <div class="error" id="search-error"></div>
+    <div class="grid" id="search-grid"></div>
+</section>
+
+<main>
+    <!-- TOP10 -->
+    <section>
+        <div class="bar">
+            <h2 style="margin:0">TOP10</h2>
+            <div class="count" id="top10-count">0건</div>
+        </div>
+        <div class="error" id="top10-error"></div>
+        <div class="grid" id="top10-grid"></div>
+    </section>
+
+    <!-- 다가오는 공연 -->
+    <section>
+        <div class="bar">
+            <h2 style="margin:0">다가오는 공연 (고정 curr_date ~ +31일)</h2>
+            <div class="count" id="upcoming-count">0건</div>
+        </div>
+        <div class="error" id="upcoming-error"></div>
+        <div class="grid" id="upcoming-grid"></div>
+    </section>
+</main>
+
+<script>
+    const $ = s => document.querySelector(s);
+
+    function pick(o, keys) {
+        for (const k of keys) {
+            if (o && o[k] != null && String(o[k]).trim() !== '') return o[k];
+        }
+        return undefined;
+    }
+
+    function imgBox(url) {
+        const div = document.createElement('div');
+        div.className = 'thumb';
+        if (!url) { div.textContent = '포스터 없음'; return div; }
+        const img = new Image();
+        img.src = url; img.alt = 'poster';
+        img.onerror = () => { div.textContent = '포스터 없음'; };
+        div.appendChild(img);
+        return div;
+    }
+
+    // TOP10
+    async function loadTop10() {
+        const grid = $('#top10-grid'), err = $('#top10-error');
+        grid.innerHTML = ''; err.style.display = 'none';
+        try {
+            const res = await fetch('/api/performs/fixed/top10');
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json(); // [{rnum, mt20id, prfnm, poster}, ...]
+            for (const it of data) {
+                const title  = pick(it, ['prfnm', 'title']) || '(제목 없음)';
+                const poster = pick(it, ['poster', 'posterUrl']);
+                const id     = pick(it, ['mt20id', 'externalId']) || '-';
+                const rank   = pick(it, ['rnum']) || '?';
+
+                const card = document.createElement('div'); card.className = 'card';
+                const thumb = imgBox(poster);
+                const badge = document.createElement('div'); badge.className = 'rank'; badge.textContent = `#${rank}`;
+                thumb.appendChild(badge);
+
+                const meta = document.createElement('div'); meta.className = 'meta';
+                const t = document.createElement('div'); t.className = 'title'; t.textContent = title;
+                const s = document.createElement('div'); s.className = 'sub'; s.textContent = 'KOPIS 박스오피스';
+                const p = document.createElement('div'); p.className = 'pill'; p.textContent = `mt20id: ${id}`;
+
+                meta.append(t, s, p);
+                card.append(thumb, meta);
+                grid.append(card);
+            }
+            $('#top10-count').textContent = `${data.length}건`;
+        } catch (e) {
+            err.textContent = 'TOP10 로드 실패: ' + (e.message || e);
+            err.style.display = 'block';
+        }
+    }
+
+    // 다가오는 공연
+    async function loadUpcoming() {
+        const grid = $('#upcoming-grid'), err = $('#upcoming-error');
+        grid.innerHTML = ''; err.style.display = 'none';
+        try {
+            const res = await fetch('/api/performs/fixed/upcoming');
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json(); // [{title/startDate/venueName/posterUrl/externalId}... or 호환키]
+            for (const it of data) {
+                const title  = pick(it, ['title', 'prfnm']) || '(제목 없음)';
+                const poster = pick(it, ['posterUrl', 'poster']);
+                const id     = pick(it, ['externalId', 'mt20id']) || '-';
+                const start  = pick(it, ['startDate', 'prfpdfrom']) || '';
+                const venue  = pick(it, ['venueName', 'fcltynm']) || '';
+
+                const card = document.createElement('div'); card.className = 'card';
+                const thumb = imgBox(poster);
+                const meta = document.createElement('div'); meta.className = 'meta';
+                const t = document.createElement('div'); t.className = 'title'; t.textContent = title;
+                const s = document.createElement('div'); s.className = 'sub'; s.textContent = `${start}${venue ? ' • ' + venue : ''}`;
+                const p = document.createElement('div'); p.className = 'pill'; p.textContent = `mt20id: ${id}`;
+                meta.append(t, s, p);
+                card.append(thumb, meta);
+                grid.append(card);
+            }
+            $('#upcoming-count').textContent = `${data.length}건`;
+        } catch (e) {
+            err.textContent = '다가오는 공연 로드 실패: ' + (e.message || e);
+            err.style.display = 'block';
+        }
+    }
+
+    // 초기 실행
+    (async () => {
+        await Promise.allSettled([ loadTop10(), loadUpcoming() ]);
+    })();
+
+    // ============ 검색 ============
+
+    function toggleSectionsForSearch(active) {
+        const searchSec = $('#search-section');
+        const top10Sec = $('#top10-grid').closest('section');
+        const upcomingSec = $('#upcoming-grid').closest('section');
+        if (active) {
+            searchSec.style.display = '';
+            top10Sec.style.display = 'none';
+            upcomingSec.style.display = 'none';
+            $('#clear-btn').style.display = '';
+        } else {
+            searchSec.style.display = 'none';
+            top10Sec.style.display = '';
+            upcomingSec.style.display = '';
+            $('#clear-btn').style.display = 'none';
+            $('#search-input').value = '';
+        }
+    }
+
+    function toDetailLink(externalId) {
+        // 카드 클릭 시 상세로 이동 (프로젝트에서 쓰는 방식에 맞게)
+        // 1) 외부ID 파라미터 방식:
+        return `/perform-detail.html?externalId=${encodeURIComponent(externalId)}`;
+
+        // 2) endpoint 파라미터로 넘기던 예전 방식 쓰려면 아래로 교체:
+        // return `/perform-detail.html?endpoint=${encodeURIComponent('/api/performs/by-external/' + externalId)}`;
+    }
+
+    function makeCard({ title, poster, id, subtitle }) {
+        const card = document.createElement('div'); card.className = 'card';
+        const thumb = imgBox(poster);
+        const meta = document.createElement('div'); meta.className = 'meta';
+        const t = document.createElement('div'); t.className = 'title'; t.textContent = title || '(제목 없음)';
+        const s = document.createElement('div'); s.className = 'sub'; s.textContent = subtitle || '';
+        const p = document.createElement('div'); p.className = 'pill'; p.textContent = `mt20id: ${id || '-'}`;
+        meta.append(t, s, p);
+        card.append(thumb, meta);
+
+        // 상세 페이지로 이동
+        if (id) {
+            card.style.cursor = 'pointer';
+            card.addEventListener('click', () => {
+                location.href = toDetailLink(id);
+            });
+        }
+        return card;
+    }
+
+    async function doSearch(q) {
+        const grid = $('#search-grid'), err = $('#search-error');
+        grid.innerHTML = ''; err.style.display = 'none';
+
+        if (!q || !q.trim()) {
+            toggleSectionsForSearch(false);
+            return;
+        }
+
+        toggleSectionsForSearch(true);
+
+        try {
+            const url = `/api/performs/fixed/search?q=${encodeURIComponent(q)}&limit=200`;
+            const res = await fetch(url);
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const list = await res.json(); // [{ externalId, title, posterUrl }...]
+            for (const it of list) {
+                const title  = it.title || '(제목 없음)';
+                const poster = it.posterUrl;
+                const id     = it.externalId;
+                grid.append(
+                    makeCard({ title, poster, id, subtitle: 'DB 검색 결과' })
+                );
+            }
+            $('#search-count').textContent = `${list.length}건`;
+        } catch (e) {
+            err.textContent = '검색 실패: ' + (e.message || e);
+            err.style.display = 'block';
+            $('#search-count').textContent = '0건';
+        }
+    }
+
+    // 이벤트 바인딩
+    (function bindSearchUI(){
+        const input = $('#search-input');
+        const btn = $('#search-btn');
+        const clearBtn = $('#clear-btn');
+
+        // 엔터로 검색
+        input.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter') {
+                doSearch(input.value);
+            }
+        });
+
+        // 버튼으로 검색
+        btn.addEventListener('click', () => doSearch(input.value));
+
+        // 초기화: 검색 해제하고 기본 섹션 복귀
+        clearBtn.addEventListener('click', () => {
+            toggleSectionsForSearch(false);
+            // 기본 섹션 재로딩 원하면 주석 해제
+            // loadTop10();
+            // loadUpcoming();
+        });
+
+        // URL에 q 파라미터가 있으면 자동 검색
+        const params = new URLSearchParams(location.search);
+        const q = params.get('q');
+        if (q) {
+            input.value = q;
+            doSearch(q);
+        }
+    })();
+</script>
+</body>
+</html>

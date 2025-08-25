@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8" />
+    <title>공연 상세정보</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        :root { --bg:#0b0c10; --panel:#11161c; --text:#e8edf2; --muted:#9aa5b1; --line:#232831; }
+        body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Apple SD Gothic Neo,Noto Sans KR,sans-serif}
+        header{padding:16px 20px;border-bottom:1px solid var(--line)}
+        h1{margin:0;font-size:20px}
+        .wrap{max-width:960px;margin:24px auto;padding:0 16px}
+        .card{display:grid;grid-template-columns:260px 1fr;gap:18px;background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+        .poster{width:100%;height:100%;aspect-ratio:3/4;object-fit:cover;background:#0f1115}
+        .content{padding:18px}
+        .label{display:inline-block;min-width:96px;color:var(--muted)}
+        .row{display:flex;gap:10px;margin:12px 0}
+        .title{font-size:22px;font-weight:800;margin:0 0 8px}
+        .id{font-size:12px;color:var(--muted);margin-bottom:16px}
+        .desc{white-space:pre-wrap;line-height:1.55}
+        .actions{display:flex;gap:10px;margin-top:16px}
+        a.btn{display:inline-block;padding:8px 12px;border-radius:10px;border:1px solid var(--line);color:var(--text);text-decoration:none}
+        a.btn:hover{border-color:#4cc9f0;color:#4cc9f0}
+        .hint{font-size:12px;color:var(--muted);margin-top:8px;word-break:break-all}
+        @media (max-width:780px){ .card{grid-template-columns:1fr} }
+    </style>
+</head>
+<body>
+<header>
+    <h1>공연 상세정보</h1>
+</header>
+
+<div class="wrap">
+    <div id="card" class="card" style="display:none">
+        <img id="poster" class="poster" alt="">
+        <div class="content">
+            <h2 id="title" class="title"></h2>
+            <div id="id" class="id"></div>
+
+            <div class="row"><span class="label">공연일자</span><span id="dates"></span></div>
+            <div class="row"><span class="label">공연장소</span><span id="venue"></span></div>
+
+            <div class="row" style="margin-top:18px">
+                <span class="label">줄거리</span>
+            </div>
+            <div id="desc" class="desc"></div>
+
+            <div class="actions">
+                <a id="kopisLink" class="btn" target="_blank" rel="noopener">KOPIS 상세</a>
+                <a id="back" class="btn" href="#" onclick="history.length > 1 ? history.back() : location.href='/perform-summary.html'">목록으로</a><a id="back" class="btn" href="#" onclick="history.length > 1 ? history.back() : location.href='/perform-summary.html'">목록으로</a>
+            </div>
+            <div id="ep" class="hint"></div>
+        </div>
+    </div>
+
+    <div id="empty" class="hint">id가 필요합니다. URL에 <code>?id=PFxxxxx</code> 형태로 전달하세요.</div>
+</div>
+
+<script>
+    const params = new URLSearchParams(location.search);
+    const id = params.get('id');
+    const ENDPOINT_TMPL = params.get('endpoint') || '/api/performs/by-external/{id}';
+
+    const pick = (obj, keys, fallback='') => {
+        for (const k of keys) {
+            if (obj && obj[k] != null && obj[k] !== '') return obj[k];
+        }
+        return fallback;
+    };
+    const fmtDate = (v) => {
+        const s = String(v||'');
+        if (s.length === 8) return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
+        return s;
+    };
+
+    async function load() {
+        if (!id) return;
+
+        const url = (ENDPOINT_TMPL || '').replace('{id}', encodeURIComponent(id));
+        document.getElementById('ep').textContent = `Endpoint: ${url}`;
+
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+
+        // 응답이 {data:{...}} / {item:{...}} / {...} 아무거나 대응
+        const it = data?.data || data?.item || data;
+
+        const mt20id = String(pick(it, ['mt20id','externalId','external_id','id','performId'], id));
+        const name   = pick(it, ['prfnm','performName','title','name'],'(제목 없음)');
+        const from   = pick(it, ['prfpdfrom','startDate','start','from']);
+        const to     = pick(it, ['prfpdto','endDate','end','to']);
+        const venue  = pick(it, ['fcltynm','venueName','place','hall'],'');
+        const desc   = pick(it, ['sty','description','story','synopsis'],'');
+        const poster = pick(it, ['poster','posterUrl','image','posterImageUrl'], '');
+
+        document.getElementById('title').textContent = name;
+        document.getElementById('id').textContent = `공연 ID: ${mt20id}`;
+        document.getElementById('dates').textContent = [fmtDate(from), fmtDate(to)].filter(Boolean).join(' ~ ') || '-';
+        document.getElementById('venue').textContent = venue || '-';
+        document.getElementById('desc').textContent = desc || '-';
+        document.getElementById('poster').src = poster || 'data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22400%22 height=%22540%22><rect width=%22100%25%22 height=%22100%25%22 fill=%22%2311161c%22/><text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 fill=%22%234a5568%22 font-family=%22sans-serif%22 font-size=%2220%22>NO IMAGE</text></svg>';
+        document.getElementById('kopisLink').href = `https://www.kopis.or.kr/por/pblprfr/pblprfrView.do?mt20id=${encodeURIComponent(mt20id)}`;
+
+        document.getElementById('empty').style.display = 'none';
+        document.getElementById('card').style.display = '';
+    }
+
+    if (id) load().catch(err => {
+        document.getElementById('empty').innerText = '상세 조회 실패: ' + err.message;
+        document.getElementById('empty').style.display = '';
+    });
+</script>
+</body>
+</html>

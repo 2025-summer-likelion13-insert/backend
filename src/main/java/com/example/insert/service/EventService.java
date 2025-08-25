@@ -1,5 +1,6 @@
 package com.example.insert.service;
 
+
 import com.example.insert.dto.CreateEventRequest;
 import com.example.insert.dto.UpdateEventRequest;
 import com.example.insert.dto.EventResponse;
@@ -13,10 +14,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.List;
 import java.util.stream.Collectors;
 
+
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class EventService {
+
 
     private final EventRepository eventRepository;
 
@@ -214,5 +217,6 @@ public class EventService {
                 .createdAt(event.getCreatedAt())
                 .updatedAt(event.getUpdatedAt())
                 .build();
+
     }
 }

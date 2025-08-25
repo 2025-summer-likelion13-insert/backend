@@ -45,4 +45,6 @@ uploads/
 uploads/*
 
 ### Resources ###
+
 src/main/resources/application.properties
+

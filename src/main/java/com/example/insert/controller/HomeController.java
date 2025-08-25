@@ -47,6 +47,7 @@ public class HomeController {
                         <div class="endpoint">DELETE /api/schedules/places/{scheduleId}</div>
                         <div class="endpoint">PUT /api/schedules/places/{scheduleId}/visit</div>
                         
+
                         <h4>이벤트 관리 API</h4>
                         <div class="endpoint">POST /api/events</div>
                         <div class="endpoint">GET /api/events</div>
@@ -59,6 +60,7 @@ public class HomeController {
                         <div class="endpoint">PUT /api/events/{eventId}</div>
                         <div class="endpoint">DELETE /api/events/{eventId}</div>
                         
+
                         <h4>데이터베이스</h4>
                         <div class="endpoint">H2 Console: <a href="/h2-console" target="_blank">/h2-console</a></div>
                     </div>
